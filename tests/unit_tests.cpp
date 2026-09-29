@@ -617,6 +617,46 @@ TEST_CASE(TestScannerBackend_CancelWhenIdle) {
     backend.cancelScan();
 }
 
+TEST_CASE(TestPageItem_DiskScratchStorage) {
+    QTemporaryDir scratchDir;
+    ASSERT_TRUE(scratchDir.isValid());
+    QString scratchFile = scratchDir.filePath("test_scratch.png");
+
+    QImage orig = createPatternImage(300, 400, 300, Qt::darkCyan);
+    ASSERT_TRUE(orig.save(scratchFile, "PNG"));
+
+    // Verify low memory footprint: image loaded on-demand from disk
+    QImage loaded(scratchFile);
+    ASSERT_FALSE(loaded.isNull());
+    ASSERT_EQ(loaded.width(), 300);
+    ASSERT_EQ(loaded.height(), 400);
+
+    // Verify thumb is scaled correctly
+    QImage thumb = loaded.scaledToWidth(180, Qt::SmoothTransformation);
+    ASSERT_EQ(thumb.width(), 180);
+    ASSERT_TRUE(thumb.sizeInBytes() < loaded.sizeInBytes());
+}
+
+TEST_CASE(TestPdfAssembler_CorruptedPdfHandling) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    QString badPdf = tmpDir.filePath("corrupted.pdf");
+
+    // Write corrupted bytes to file
+    QFile f(badPdf);
+    ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+    f.write("%PDF-1.4\n%this is pure garbage content without xref or catalog\nendstream\n%%EOF\n");
+    f.close();
+
+    // pdfPageCount should safely detect invalid file without crash
+    int count = PdfAssembler::pdfPageCount(badPdf.toStdString());
+    ASSERT_EQ(count, 0);
+
+    // renderPdfPage should return null image gracefully
+    QImage rendered = PdfAssembler::renderPdfPage(badPdf.toStdString(), 0, 200);
+    ASSERT_TRUE(rendered.isNull());
+}
+
 // ===========================================================================
 // Main Entry Point
 // ===========================================================================

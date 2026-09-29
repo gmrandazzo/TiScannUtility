@@ -26,6 +26,7 @@
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QCloseEvent>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileDialog>
@@ -38,6 +39,7 @@
 #include <QProgressBar>
 #include <QShortcut>
 #include <QStatusBar>
+#include <QTemporaryDir>
 #include <QTimer>
 #include <QUrl>
 #include <QVariant>
@@ -52,9 +54,21 @@ QString rotationSuffix(int rotation) {
 }
 } // namespace
 
+QImage PageItem::fullImage() const {
+    if (isPdf) {
+        return PdfAssembler::renderPdfPage(pdfPath.toStdString(), pdfPage, 2400);
+    }
+    if (!scratchPath.isEmpty() && QFile::exists(scratchPath)) {
+        return QImage(scratchPath);
+    }
+    return QImage();
+}
+
 MainWindow::MainWindow()
     : ui(new Ui::MainWindow) {
     ui->setupUi(this);
+
+    scratchDir = std::make_unique<QTemporaryDir>();
 
     ui->duplexCheck->setToolTip("Scan both sides (needs a duplex document feeder)");
 
@@ -111,9 +125,7 @@ MainWindow::MainWindow()
     connect(ui->list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
         PageItem* page = pageOf(item);
         if (!page) return;
-        QImage full = page->isPdf
-            ? PdfAssembler::renderPdfPage(page->pdfPath.toStdString(), page->pdfPage, 2400)
-            : page->image;
+        QImage full = page->fullImage();
         if (full.isNull()) return;
         if (page->rotation)
             full = full.transformed(QTransform().rotate(page->rotation), Qt::SmoothTransformation);
@@ -206,8 +218,20 @@ void MainWindow::onCancel() {
 void MainWindow::addScannedPage(const QImage& img) {
     if (img.isNull()) return;
     auto page = std::make_unique<PageItem>();
-    page->image = img;
     page->label = QString("Scan %1").arg(++scanCounter);
+    
+    // Cache thumbnail in memory
+    page->thumb = img.scaledToWidth(kThumbWidth, Qt::SmoothTransformation);
+
+    // Stream full-resolution page to scratch file on disk to prevent RAM exhaustion
+    if (!scratchDir || !scratchDir->isValid()) {
+        scratchDir = std::make_unique<QTemporaryDir>();
+    }
+    QString scratchFile = scratchDir->filePath(QString("page_%1.png").arg(scanCounter));
+    if (img.save(scratchFile, "PNG")) {
+        page->scratchPath = scratchFile;
+    }
+
     pages.push_back(std::move(page));
     auto* item = new QListWidgetItem(ui->list);
     item->setData(Qt::UserRole, QVariant::fromValue(static_cast<void*>(pages.back().get())));
@@ -236,9 +260,7 @@ void MainWindow::addPdfPageItem(const QString& path, int pageIndex, int total) {
 
 QImage MainWindow::makeThumb(PageItem& page) {
     if (page.thumb.isNull()) {
-        QImage src = page.isPdf
-            ? PdfAssembler::renderPdfPage(page.pdfPath.toStdString(), page.pdfPage, 480)
-            : page.image;
+        QImage src = page.fullImage();
         if (src.isNull()) return QImage();
         page.thumb = src.scaledToWidth(kThumbWidth, Qt::SmoothTransformation);
     }
@@ -271,20 +293,35 @@ void MainWindow::onAddPdf() {
     if (path.isEmpty()) return;
     int n = PdfAssembler::pdfPageCount(path.toStdString());
     if (n <= 0) {
-        QMessageBox::warning(this, "Add PDF", "Could not read this PDF file.");
+        QMessageBox::warning(this, "Add PDF", "Could not read this PDF file. It may be password-protected or corrupted.");
         return;
     }
     isProcessing = true;
     ui->centralwidget->setEnabled(false);
     QApplication::setOverrideCursor(Qt::WaitCursor);
+    int importedCount = 0;
+    int skippedCount = 0;
     for (int i = 0; i < n; ++i) {
+        // Quick verification: check if page can be previewed/read
+        QImage previewCheck = PdfAssembler::renderPdfPage(path.toStdString(), i, 100);
+        if (previewCheck.isNull()) {
+            ++skippedCount;
+            continue;
+        }
         addPdfPageItem(path, i, n);
+        ++importedCount;
         if (i % 10 == 0) QCoreApplication::processEvents();
     }
     QApplication::restoreOverrideCursor();
     ui->centralwidget->setEnabled(true);
     isProcessing = false;
-    statusBar()->showMessage(QString("Imported %1 page(s) from %2").arg(n).arg(QFileInfo(path).fileName()));
+
+    if (skippedCount > 0) {
+        QMessageBox::information(this, "PDF Import Notice",
+            QString("Imported %1 page(s). Skipped %2 unreadable or damaged page(s).")
+                .arg(importedCount).arg(skippedCount));
+    }
+    statusBar()->showMessage(QString("Imported %1 page(s) from %2").arg(importedCount).arg(QFileInfo(path).fileName()));
 }
 
 void MainWindow::onDeleteSelected() {
@@ -355,10 +392,12 @@ void MainWindow::onSave() {
     for (int i = 0; ok && i < ui->list->count(); ++i) {
         PageItem* page = pageOf(ui->list->item(i));
         if (!page) continue;
-        if (page->isPdf)
+        if (page->isPdf) {
             ok = assembler.appendPdfPage(page->pdfPath.toStdString(), page->pdfPage, page->rotation);
-        else
-            ok = assembler.appendImage(page->image, page->rotation);
+        } else {
+            QImage img = page->fullImage();
+            ok = assembler.appendImage(img, page->rotation);
+        }
         if (i % 5 == 0) QCoreApplication::processEvents();
     }
     std::string endErr;
@@ -381,6 +420,32 @@ void MainWindow::onSave() {
     QDesktopServices::openUrl(QUrl::fromLocalFile(path));
 }
 
+void MainWindow::closeEvent(QCloseEvent* event) {
+    if (scanning) {
+        auto answer = QMessageBox::question(this, "Scan in Progress",
+            "A scan is currently running. Do you want to cancel the scan and exit?",
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (answer != QMessageBox::Yes) {
+            event->ignore();
+            return;
+        }
+        backend.cancelScan();
+    } else if (!pages.empty()) {
+        auto answer = QMessageBox::question(this, "Unsaved Pages",
+            QString("You have %1 unsaved page(s). Are you sure you want to discard them and exit?")
+                .arg(pages.size()),
+            QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Cancel);
+        if (answer != QMessageBox::Discard) {
+            event->ignore();
+            return;
+        }
+    }
+    if (scratchDir) {
+        scratchDir->remove();
+    }
+    event->accept();
+}
+
 void MainWindow::onAbout() {
     QMessageBox::about(this, "About TiScannUtility",
         QString("<h3>TiScannUtility %1</h3>"
@@ -392,5 +457,5 @@ void MainWindow::onAbout() {
 }
 
 void MainWindow::onClose() {
-    QApplication::quit();
+    close();
 }

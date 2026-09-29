@@ -26,19 +26,23 @@
 #include <memory>
 #include <vector>
 
+class QCloseEvent;
 class QListWidgetItem;
 class QProgressBar;
 class QTimer;
+class QTemporaryDir;
 namespace Ui { class MainWindow; }
 
 struct PageItem {
-    QImage image;            // scanned page at full resolution
+    QString scratchPath;     // path to temporary disk file for scanned page
     QImage thumb;            // cached thumbnail (unrotated)
     bool isPdf = false;      // page imported from an existing PDF
     QString pdfPath;         //   source file (isPdf)
     int pdfPage = 0;         //   zero-based page number in source file (isPdf)
     int rotation = 0;        // 0/90/180/270 clockwise
     QString label;           // display name ("Scan 3", "PDF 2 · p.5")
+
+    QImage fullImage() const;
 };
 
 class MainWindow : public QMainWindow {
@@ -46,6 +50,9 @@ class MainWindow : public QMainWindow {
 public:
     MainWindow();
     ~MainWindow() override;
+
+protected:
+    void closeEvent(QCloseEvent* event) override;
 
 private slots:
     void onScan();
@@ -76,6 +83,7 @@ private:
     ScannerBackend backend;
     std::vector<ScannerInfo> devices;
     std::vector<std::unique_ptr<PageItem>> pages; // owns the PageItems; list order = output order
+    std::unique_ptr<QTemporaryDir> scratchDir;
 
     QProgressBar* busyBar = nullptr;
     QTimer* scanTimeoutTimer = nullptr;
