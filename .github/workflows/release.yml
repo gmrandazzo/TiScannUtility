@@ -1,0 +1,138 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Build Linux AppImage
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            g++ \
+            pkg-config \
+            qtbase5-dev \
+            libqt5svg5-dev \
+            libsane-dev \
+            libpoppler-qt5-dev \
+            poppler-utils \
+            file \
+            wget
+
+      - name: Configure and build
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+          cmake --build build -j$(nproc)
+
+      - name: Run verification test
+        run: |
+          QT_QPA_PLATFORM=offscreen ./build/TiScannUtility --pdftest
+
+      - name: Install to AppDir
+        run: |
+          DESTDIR=AppDir cmake --install build
+
+      - name: Package AppImage with linuxdeploy
+        run: |
+          wget -q -nc https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q -nc https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy*.AppImage
+
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          export QMAKE=/usr/lib/qt5/bin/qmake
+
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir AppDir \
+            -e build/TiScannUtility \
+            -d cmake/TiScannUtility.desktop \
+            -i cmake/TiScannUtility.svg \
+            --plugin qt \
+            --output appimage
+
+          # Rename to standardized asset name
+          mv TiScannUtility*.AppImage TiScannUtility-x86_64.AppImage
+
+      - name: Upload Linux AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TiScannUtility-Linux
+          path: TiScannUtility-x86_64.AppImage
+
+  build-macos:
+    name: Build macOS Application Bundle
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Homebrew dependencies
+        run: |
+          brew install qt cmake
+
+      - name: Configure and build
+        run: |
+          cmake -B build \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix qt)" \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j$(sysctl -n hw.ncpu)
+
+      - name: Run verification test
+        run: |
+          ./build/TiScannUtility.app/Contents/MacOS/TiScannUtility --pdftest
+
+      - name: Package macOS App Bundle
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent build/TiScannUtility.app TiScannUtility-macOS.zip
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TiScannUtility-macOS
+          path: TiScannUtility-macOS.zip
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-linux, build-macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: TiScannUtility-Linux
+          path: dist
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: TiScannUtility-macOS
+          path: dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/TiScannUtility-x86_64.AppImage
+            dist/TiScannUtility-macOS.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: false

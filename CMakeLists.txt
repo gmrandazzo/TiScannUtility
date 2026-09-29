@@ -18,20 +18,30 @@
 
 cmake_minimum_required(VERSION 3.21)
 
-project(TiScannUtility VERSION 1.0.0 LANGUAGES CXX OBJCXX)
+if(APPLE)
+    project(TiScannUtility VERSION 1.0.0 LANGUAGES CXX OBJCXX)
+else()
+    project(TiScannUtility VERSION 1.0.0 LANGUAGES CXX)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTOUIC ON)
+set(CMAKE_AUTORCC ON)
+
 set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0")
 
-# Qt 6 from Homebrew is a shared build; linking stays dynamic so the Qt
-# libraries remain under the GNU LGPL. Static Qt linking is not supported here.
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+# Support both Qt 6 and Qt 5 dynamically linked
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Gui Core)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Gui Core)
 
-qt_standard_project_setup()
+if(COMMAND qt_standard_project_setup)
+    qt_standard_project_setup()
+endif()
 
-set(SOURCES
+set(COMMON_SOURCES
     src/main.cpp
     src/MainWindow.cpp
     src/MainWindow.h
@@ -39,29 +49,87 @@ set(SOURCES
     src/PreviewDialog.h
     src/PreviewDialog.cpp
     src/ScannerBackend.h
-    src/ScannerBackend.mm
-    src/ImageConversion.h
-    src/ImageConversion.cpp
     src/PdfAssembler.h
     src/PdfAssembler.cpp
 )
 
-qt_add_executable(TiScannUtility MACOSX_BUNDLE ${SOURCES})
+if(APPLE)
+    set(PLATFORM_SOURCES
+        src/ScannerBackend.mm
+        src/ImageConversion.h
+        src/ImageConversion.cpp
+    )
+    set_source_files_properties(src/ScannerBackend.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+elseif(WIN32)
+    set(PLATFORM_SOURCES
+        src/ScannerBackend_Win.cpp
+    )
+else()
+    set(PLATFORM_SOURCES
+        src/ScannerBackend_Sane.cpp
+    )
+endif()
 
-# ScannerBackend.mm uses Objective-C with ARC
-set_source_files_properties(src/ScannerBackend.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+set(SOURCES ${COMMON_SOURCES} ${PLATFORM_SOURCES})
+
+if(COMMAND qt_add_executable)
+    qt_add_executable(TiScannUtility MACOSX_BUNDLE ${SOURCES})
+else()
+    add_executable(TiScannUtility MACOSX_BUNDLE ${SOURCES})
+endif()
 
 target_include_directories(TiScannUtility PRIVATE src)
 
 target_link_libraries(TiScannUtility PRIVATE
-    Qt6::Widgets
-    "-framework ImageCaptureCore"
-    "-framework CoreGraphics"
+    Qt${QT_VERSION_MAJOR}::Widgets
+    Qt${QT_VERSION_MAJOR}::Gui
+    Qt${QT_VERSION_MAJOR}::Core
 )
 
-set_target_properties(TiScannUtility PROPERTIES
-    MACOSX_BUNDLE_BUNDLE_NAME "TiScannUtility"
-    MACOSX_BUNDLE_BUNDLE_VERSION "1.0.0"
-    MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.0"
-    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Info.plist.in"
+if(APPLE)
+    target_link_libraries(TiScannUtility PRIVATE
+        "-framework ImageCaptureCore"
+        "-framework CoreGraphics"
+    )
+
+    set_target_properties(TiScannUtility PROPERTIES
+        MACOSX_BUNDLE_BUNDLE_NAME "TiScannUtility"
+        MACOSX_BUNDLE_BUNDLE_VERSION "1.0.0"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.0"
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Info.plist.in"
+    )
+elseif(UNIX)
+    find_package(Threads REQUIRED)
+    target_link_libraries(TiScannUtility PRIVATE
+        ${CMAKE_DL_LIBS}
+        Threads::Threads
+    )
+
+    find_package(PkgConfig QUIET)
+    if(PKG_CONFIG_FOUND)
+        pkg_check_modules(POPPLER_QT QUIET poppler-qt${QT_VERSION_MAJOR})
+        if(POPPLER_QT_FOUND)
+            target_include_directories(TiScannUtility PRIVATE ${POPPLER_QT_INCLUDE_DIRS})
+            target_link_libraries(TiScannUtility PRIVATE ${POPPLER_QT_LIBRARIES})
+        endif()
+
+        pkg_check_modules(QPDF QUIET libqpdf)
+        if(QPDF_FOUND)
+            target_include_directories(TiScannUtility PRIVATE ${QPDF_INCLUDE_DIRS})
+            target_link_libraries(TiScannUtility PRIVATE ${QPDF_LIBRARIES})
+        endif()
+    endif()
+endif()
+
+include(GNUInstallDirs)
+
+install(TARGETS TiScannUtility
+    BUNDLE DESTINATION .
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+
+if(UNIX AND NOT APPLE)
+    install(FILES cmake/TiScannUtility.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+    install(FILES cmake/TiScannUtility.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+endif()
+
