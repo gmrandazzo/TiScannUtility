@@ -28,10 +28,12 @@
 
 class QListWidgetItem;
 class QProgressBar;
+class QTimer;
 namespace Ui { class MainWindow; }
 
 struct PageItem {
     QImage image;            // scanned page at full resolution
+    QImage thumb;            // cached thumbnail (unrotated)
     bool isPdf = false;      // page imported from an existing PDF
     QString pdfPath;         //   source file (isPdf)
     int pdfPage = 0;         //   zero-based page number in source file (isPdf)
@@ -68,7 +70,7 @@ private:
     void moveCurrentRow(int delta);
     PageItem* pageOf(QListWidgetItem* item) const;
     QList<QListWidgetItem*> selectedPageItems() const;
-    static QImage makeThumb(const PageItem& page);
+    static QImage makeThumb(PageItem& page);
 
     Ui::MainWindow* ui;
     ScannerBackend backend;
@@ -76,7 +78,9 @@ private:
     std::vector<std::unique_ptr<PageItem>> pages; // owns the PageItems; list order = output order
 
     QProgressBar* busyBar = nullptr;
+    QTimer* scanTimeoutTimer = nullptr;
     bool scanning = false;
+    bool isProcessing = false;
     int scanCounter = 0;
     int importCounter = 0;
 };

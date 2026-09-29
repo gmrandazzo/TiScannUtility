@@ -234,7 +234,9 @@ static QImage thresholdToMono(const QImage& src) {
     QImage out(gray.width(), gray.height(), QImage::Format_Mono);
     out.setDotsPerMeterX(gray.dotsPerMeterX());
     out.setDotsPerMeterY(gray.dotsPerMeterY());
-    out.fill(0); // white in Qt Format_Mono
+    out.setColor(0, qRgb(255, 255, 255)); // 0 = white
+    out.setColor(1, qRgb(0, 0, 0));       // 1 = black
+    out.fill(0);                          // fill all white
     for (int y = 0; y < gray.height(); ++y) {
         const uchar* s = gray.constScanLine(y);
         uchar* d = out.scanLine(y);
@@ -412,7 +414,7 @@ struct ScannerBackend::Impl {
         }
     }
 
-    void configureOptionInt(SANE_Handle h, const std::string& name, int targetVal) {
+    int configureOptionInt(SANE_Handle h, const std::string& name, int targetVal) {
         SANE_Int numOpts = 0;
         gSane.sane_control_option(h, 0, SANE_ACTION_GET_VALUE, &numOpts, nullptr);
         for (SANE_Int i = 1; i < numOpts; ++i) {
@@ -422,14 +424,15 @@ struct ScannerBackend::Impl {
                 if (desc->type == SANE_TYPE_INT) {
                     SANE_Int val = targetVal;
                     gSane.sane_control_option(h, i, SANE_ACTION_SET_VALUE, &val, nullptr);
-                    return;
+                    return int(val);
                 } else if (desc->type == SANE_TYPE_FIXED) {
                     SANE_Int val = targetVal << 16;
                     gSane.sane_control_option(h, i, SANE_ACTION_SET_VALUE, &val, nullptr);
-                    return;
+                    return int(val >> 16);
                 }
             }
         }
+        return targetVal;
     }
 
     void scanWorker(std::string deviceUuid, ScanOptions options) {
@@ -451,7 +454,7 @@ struct ScannerBackend::Impl {
         }
 
         // Configure Resolution
-        configureOptionInt(h, "resolution", options.dpi);
+        int actualDpi = configureOptionInt(h, "resolution", options.dpi);
 
         // Configure Color Mode
         if (options.colorMode == ColorMode::Color) {
@@ -565,7 +568,8 @@ struct ScannerBackend::Impl {
                 }
 
                 if (!pageImg.isNull()) {
-                    int dpm = int(options.dpi / 0.0254 + 0.5);
+                    int dpiToUse = actualDpi > 0 ? actualDpi : options.dpi;
+                    int dpm = int(dpiToUse / 0.0254 + 0.5);
                     pageImg.setDotsPerMeterX(dpm);
                     pageImg.setDotsPerMeterY(dpm);
 

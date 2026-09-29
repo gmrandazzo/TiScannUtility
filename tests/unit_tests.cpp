@@ -485,6 +485,84 @@ TEST_CASE(TestPdfAssembler_DestructionWithoutEnd) {
     ASSERT_TRUE(tmpDir.isValid());
 }
 
+TEST_CASE(TestPdfAssembler_SaveOverImportedSourcePdf) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    std::string pdfPath = tmpDir.filePath("original.pdf").toStdString();
+
+    // Create an initial 2-page PDF
+    {
+        PdfAssembler initAsm;
+        std::string err;
+        ASSERT_TRUE(initAsm.begin(pdfPath, &err));
+        ASSERT_TRUE(initAsm.appendImage(createPatternImage(100, 100, 150, Qt::red), 0));
+        ASSERT_TRUE(initAsm.appendImage(createPatternImage(100, 100, 150, Qt::blue), 0));
+        ASSERT_TRUE(initAsm.end(&err));
+        ASSERT_EQ(PdfAssembler::pdfPageCount(pdfPath), 2);
+    }
+
+    // Now assemble into the SAME file path by importing pages from it plus a new image
+    {
+        PdfAssembler overwriteAsm;
+        std::string err;
+        ASSERT_TRUE(overwriteAsm.begin(pdfPath, &err));
+        // Append page 0 from original
+        ASSERT_TRUE(overwriteAsm.appendPdfPage(pdfPath, 0, 0));
+        // Append new image
+        ASSERT_TRUE(overwriteAsm.appendImage(createPatternImage(100, 100, 150, Qt::green), 0));
+        // Append page 1 from original
+        ASSERT_TRUE(overwriteAsm.appendPdfPage(pdfPath, 1, 0));
+        ASSERT_TRUE(overwriteAsm.end(&err));
+    }
+
+    // Must still exist, have valid 3 pages, and not be corrupted or truncated
+    ASSERT_EQ(PdfAssembler::pdfPageCount(pdfPath), 3);
+}
+
+TEST_CASE(TestImage_MonochromeThresholdPolarity) {
+    // Verify that thresholding a white image produces a white 1-bit image,
+    // and a black image produces a black 1-bit image.
+    QImage whiteImg(10, 10, QImage::Format_RGB888);
+    whiteImg.fill(Qt::white);
+
+    QImage blackImg(10, 10, QImage::Format_RGB888);
+    blackImg.fill(Qt::black);
+
+    // Simulate thresholding algorithm with positive polarity:
+    // Format_Mono with color 0 = white, color 1 = black
+    auto threshold = [](const QImage& src) {
+        QImage gray = src.convertToFormat(QImage::Format_Grayscale8);
+        QImage out(gray.width(), gray.height(), QImage::Format_Mono);
+        out.setColor(0, qRgb(255, 255, 255));
+        out.setColor(1, qRgb(0, 0, 0));
+        out.fill(0);
+        for (int y = 0; y < gray.height(); ++y) {
+            const uchar* s = gray.constScanLine(y);
+            uchar* d = out.scanLine(y);
+            for (int x = 0; x < gray.width(); ++x) {
+                if (s[x] < 128)
+                    d[x >> 3] |= uchar(0x80 >> (x & 7));
+            }
+        }
+        return out;
+    };
+
+    QImage monoWhite = threshold(whiteImg);
+    QImage monoBlack = threshold(blackImg);
+
+    // monoWhite pixel should resolve to white (255, 255, 255)
+    QRgb whitePixel = monoWhite.pixel(5, 5);
+    ASSERT_EQ(qRed(whitePixel), 255);
+    ASSERT_EQ(qGreen(whitePixel), 255);
+    ASSERT_EQ(qBlue(whitePixel), 255);
+
+    // monoBlack pixel should resolve to black (0, 0, 0)
+    QRgb blackPixel = monoBlack.pixel(5, 5);
+    ASSERT_EQ(qRed(blackPixel), 0);
+    ASSERT_EQ(qGreen(blackPixel), 0);
+    ASSERT_EQ(qBlue(blackPixel), 0);
+}
+
 // ===========================================================================
 // SUITE 9: ScannerBackend Options & State Corner Cases
 // ===========================================================================

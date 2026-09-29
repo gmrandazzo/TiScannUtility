@@ -38,7 +38,9 @@ static QImage thresholdToMono(const QImage& src) {
     QImage out(gray.width(), gray.height(), QImage::Format_Mono);
     out.setDotsPerMeterX(gray.dotsPerMeterX());
     out.setDotsPerMeterY(gray.dotsPerMeterY());
-    out.fill(0); // all white
+    out.setColor(0, qRgb(255, 255, 255)); // 0 = white
+    out.setColor(1, qRgb(0, 0, 0));       // 1 = black
+    out.fill(0);                          // all white
     for (int y = 0; y < gray.height(); ++y) {
         const uchar* s = gray.constScanLine(y);
         uchar* d = out.scanLine(y);
@@ -61,6 +63,7 @@ struct ScanJob {
     bool scanning = false;
     bool cancelRequested = false;
     int pagesReceived = 0;
+    int actualDpi = 0;
 
     // band accumulation for the page currently being transferred
     __strong NSMutableData* buffer = nil;
@@ -160,7 +163,12 @@ struct ScannerBackend::Impl {
             if (v >= want && (best == 0 || v < best)) best = v;
         }
         if (best == 0) best = resolutions.lastIndex;
-        if (best > 0) unit.resolution = best;
+        if (best > 0) {
+            unit.resolution = best;
+            job.actualDpi = int(best);
+        } else {
+            job.actualDpi = job.options.dpi;
+        }
 
         // color mode: we always pull 8-bit data and threshold for B&W ourselves
         if (job.options.colorMode == ColorMode::Color)
@@ -259,7 +267,8 @@ struct ScannerBackend::Impl {
             job.buffer = nil;
             job.headerParsed = false;
             if (cg) {
-                QImage img = qImageFromCGImage(cg, job.options.dpi);
+                int dpi = job.actualDpi > 0 ? job.actualDpi : job.options.dpi;
+                QImage img = qImageFromCGImage(cg, dpi);
                 CGImageRelease(cg);
                 if (img.isNull()) {
                     status("Failed to convert scanned page");
