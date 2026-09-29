@@ -1,0 +1,47 @@
+name: Release
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  build-macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: brew install qt cmake
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_PREFIX_PATH="$(brew --prefix qt)" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Package with macdeployqt
+        run: |
+          $(brew --prefix qt)/bin/macdeployqt build/TiScannUtility.app
+          cd build
+          zip -r ../TiScannUtility-macOS-${{ github.ref_name }}.zip TiScannUtility.app
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: TiScannUtility-macOS-${{ github.ref_name }}.zip
+
+  build-windows:
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - run: |
+          echo "Windows build is currently unsupported. Requires rewrite using WIA/TWAIN and Poppler/QtPdf."
+          exit 1
+
+  build-linux:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - run: |
+          echo "Linux build is currently unsupported. Requires rewrite using SANE and Poppler/QtPdf."
+          exit 1

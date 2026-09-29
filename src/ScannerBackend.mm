@@ -107,6 +107,7 @@ struct ScannerBackend::Impl {
             info.name = s.name ? s.name.UTF8String : "Scanner";
             info.ready = isReady(s);
             info.hasDocumentFeeder = [s.availableFunctionalUnitTypes containsObject:@(ICScannerFunctionalUnitTypeDocumentFeeder)];
+            info.hasFlatbed = [s.availableFunctionalUnitTypes containsObject:@(ICScannerFunctionalUnitTypeFlatbed)];
             ICScannerFunctionalUnit* unit = s.selectedFunctionalUnit;
             if (unit && unit.type == ICScannerFunctionalUnitTypeDocumentFeeder)
                 info.supportsDuplex = [(ICScannerFunctionalUnitDocumentFeeder*)unit supportsDuplexScanning];
@@ -119,7 +120,7 @@ struct ScannerBackend::Impl {
                 const ScannerInfo& a = out[i];
                 const ScannerInfo& b = lastEmitted[i];
                 if (a.uuid != b.uuid || a.name != b.name || a.ready != b.ready
-                    || a.hasDocumentFeeder != b.hasDocumentFeeder || a.supportsDuplex != b.supportsDuplex) {
+                    || a.hasDocumentFeeder != b.hasDocumentFeeder || a.hasFlatbed != b.hasFlatbed || a.supportsDuplex != b.supportsDuplex) {
                     same = false;
                     break;
                 }
@@ -130,13 +131,25 @@ struct ScannerBackend::Impl {
         deviceListCb(out);
     }
 
-    // Called once the wanted functional unit is selected.
     void configureAndScan(ICScannerDevice* scanner) {
         ICScannerFunctionalUnit* unit = scanner.selectedFunctionalUnit;
         if (!unit) {
             job.scanning = job.pendingUnitSelection = false;
             if (finishedCb) finishedCb(false, "no functional unit selected");
             return;
+        }
+
+        // Smart Automatic mode: if we picked Feeder but it's empty, switch to Flatbed.
+        if (job.options.source == ScanSource::Automatic && unit.type == ICScannerFunctionalUnitTypeDocumentFeeder) {
+            if (![(ICScannerFunctionalUnitDocumentFeeder*)unit documentLoaded]) {
+                bool hasFlatbed = [scanner.availableFunctionalUnitTypes containsObject:@(ICScannerFunctionalUnitTypeFlatbed)];
+                if (hasFlatbed) {
+                    status("Feeder empty, switching to Flatbed...");
+                    job.pendingUnitSelection = true;
+                    [scanner requestSelectFunctionalUnit:ICScannerFunctionalUnitTypeFlatbed];
+                    return;
+                }
+            }
         }
 
         // resolution: smallest supported dpi >= requested, else largest available
@@ -163,6 +176,13 @@ struct ScannerBackend::Impl {
         if (unit.type == ICScannerFunctionalUnitTypeDocumentFeeder) {
             ICScannerFunctionalUnitDocumentFeeder* adf = (ICScannerFunctionalUnitDocumentFeeder*)unit;
             adf.duplexScanningEnabled = job.options.duplex && adf.supportsDuplexScanning;
+        } else if (unit.type == ICScannerFunctionalUnitTypeFlatbed) {
+            ICScannerFunctionalUnitFlatbed* flatbed = (ICScannerFunctionalUnitFlatbed*)unit;
+            // Explicitly set the scan area to the physical glass size to prevent zero-size scans
+            NSSize size = flatbed.physicalSize;
+            if (size.width > 0 && size.height > 0) {
+                flatbed.scanArea = (NSRect){{0, 0}, size};
+            }
         }
 
         scanner.transferMode = ICScannerTransferModeMemoryBased;
@@ -182,8 +202,19 @@ struct ScannerBackend::Impl {
             if (finishedCb) finishedCb(false, "scanner capabilities not loaded yet — try again in a moment");
             return;
         }
-        ICScannerFunctionalUnitType wanted = [scanner.availableFunctionalUnitTypes containsObject:@(ICScannerFunctionalUnitTypeDocumentFeeder)]
-            ? ICScannerFunctionalUnitTypeDocumentFeeder : ICScannerFunctionalUnitTypeFlatbed;
+
+        ICScannerFunctionalUnitType wanted = ICScannerFunctionalUnitTypeFlatbed;
+        bool hasFeeder = [scanner.availableFunctionalUnitTypes containsObject:@(ICScannerFunctionalUnitTypeDocumentFeeder)];
+        bool hasFlatbed = [scanner.availableFunctionalUnitTypes containsObject:@(ICScannerFunctionalUnitTypeFlatbed)];
+
+        if (job.options.source == ScanSource::Feeder && hasFeeder) {
+            wanted = ICScannerFunctionalUnitTypeDocumentFeeder;
+        } else if (job.options.source == ScanSource::Flatbed && hasFlatbed) {
+            wanted = ICScannerFunctionalUnitTypeFlatbed;
+        } else {
+            wanted = hasFeeder ? ICScannerFunctionalUnitTypeDocumentFeeder : ICScannerFunctionalUnitTypeFlatbed;
+        }
+
         ICScannerFunctionalUnit* current = scanner.selectedFunctionalUnit;
         if (current && current.type == wanted) {
             configureAndScan(scanner);
@@ -203,11 +234,21 @@ struct ScannerBackend::Impl {
             job.numComponents = band.numComponents;
             job.pixelType = band.pixelDataType;
             job.bigEndian = band.isBigEndian;
-            job.buffer = [NSMutableData dataWithLength:job.height * job.bytesPerRow];
+            
+            NSUInteger size;
+            if (__builtin_mul_overflow(job.height, job.bytesPerRow, &size)) {
+                status("Image dimensions too large");
+                return;
+            }
+            job.buffer = [NSMutableData dataWithLength:size];
             job.headerParsed = true;
         }
         if (band.dataBuffer && band.dataSize > 0 && job.buffer) {
-            NSUInteger offset = band.dataStartRow * job.bytesPerRow;
+            NSUInteger offset;
+            if (__builtin_mul_overflow(band.dataStartRow, job.bytesPerRow, &offset)) {
+                status("Band offset too large");
+                return;
+            }
             NSUInteger available = job.buffer.length > offset ? job.buffer.length - offset : 0;
             NSUInteger amount = std::min((NSUInteger)band.dataSize, available);
             if (amount > 0)
@@ -304,17 +345,20 @@ struct ScannerBackend::Impl {
 // AirScan devices no explicit "available" callback fires, so poll briefly.
 - (void)armReadinessPoll:(ICScannerDevice*)scanner {
     __weak ICScannerDevice* weakScanner = scanner;
+    __weak typeof(self) weakSelf = self;
     for (int i = 1; i <= 30; ++i) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(i * 300 * NSEC_PER_MSEC)),
                        dispatch_get_main_queue(), ^{
+            typeof(self) strongSelf = weakSelf;
+            if (!strongSelf) return;
             ICScannerDevice* s = weakScanner;
-            if (!s || !self.impl) return;
+            if (!s || !strongSelf.impl) return;
             if (!ScannerBackend::Impl::isReady(s)) return;
-            self.impl->emitDevices();
-            if (!self.impl->job.uuid.empty() && self.impl->job.waitingForUnits) {
+            strongSelf.impl->emitDevices();
+            if (!strongSelf.impl->job.uuid.empty() && strongSelf.impl->job.waitingForUnits) {
                 std::string id = s.UUIDString ? s.UUIDString.UTF8String : "";
-                if (id == self.impl->job.uuid)
-                    self.impl->startScan(s);
+                if (id == strongSelf.impl->job.uuid)
+                    strongSelf.impl->startScan(s);
             }
         });
     }
@@ -400,9 +444,9 @@ struct ScannerBackend::Impl {
 // public API
 // ---------------------------------------------------------------------------
 ScannerBackend::ScannerBackend() {
-    d = new Impl;
+    d = std::make_unique<Impl>();
     d->delegate = [SUScannerDelegate new];
-    d->delegate.impl = d;
+    d->delegate.impl = d.get();
     d->devices = [NSMutableArray new];
 }
 
@@ -411,7 +455,6 @@ ScannerBackend::~ScannerBackend() {
     d->delegate.impl = nullptr;
     d->delegate = nil;
     d->devices = nil;
-    delete d;
 }
 
 void ScannerBackend::setDeviceListCallback(std::function<void(const std::vector<ScannerInfo>&)> cb) { d->deviceListCb = std::move(cb); }

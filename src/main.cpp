@@ -25,6 +25,7 @@
 #include <QImage>
 #include <QPainter>
 #include <QTimer>
+#include <QTemporaryDir>
 
 #include <cstdio>
 
@@ -51,8 +52,11 @@ static int runPdfTest() {
     QImage b = makeImage("PAGE B rot90", Qt::lightGray);
     QImage c = makeImage("PAGE C rot180", Qt::white);
 
-    const std::string part1 = "/tmp/pdftest_part1.pdf";
-    const std::string final = "/tmp/pdftest_final.pdf";
+    QTemporaryDir tempDir;
+    if (!tempDir.isValid()) { std::puts("tempdir failed"); return 1; }
+
+    const std::string part1 = tempDir.filePath("pdftest_part1.pdf").toStdString();
+    const std::string final = tempDir.filePath("pdftest_final.pdf").toStdString();
 
     PdfAssembler p1;
     std::string err;
@@ -72,10 +76,10 @@ static int runPdfTest() {
     std::printf("part1 pages=%d, final pages=%d (expect 2 and 3)\n",
                 PdfAssembler::pdfPageCount(part1), n);
     for (int i = 0; i < n; ++i) {
-        QString png = QString("/tmp/pdftest_page%1.png").arg(i);
+        QString png = tempDir.filePath(QString("pdftest_page%1.png").arg(i));
         PdfAssembler::renderPdfPage(final, i, 500).save(png, "PNG");
     }
-    std::printf("page previews written to /tmp/pdftest_page*.png\n");
+    std::puts("page previews written to temp dir");
     std::printf("PDFTEST %s\n", n == 3 ? "PASS" : "FAIL");
     return n == 3 ? 0 : 1;
 }

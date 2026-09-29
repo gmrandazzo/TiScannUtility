@@ -1,112 +1,97 @@
 # TiScannUtility
 
-A small macOS app (C++17 / Qt 6 Widgets + macOS ImageCaptureCore) that scans
-from your **Canon MF660C Series** over the network, lets you reorder / delete /
-rotate pages, mix in pages from existing PDFs, and save one final PDF.
+![TiScannUtility screenshot](tiscannutility.png)
 
-No Canon drivers needed — macOS talks to the scanner natively via AirScan
-(eSCL over IPP), the same technology Apple's Image Capture app uses.
+A fast, cross-compatible macOS scanning application (C++17 / Qt 6 Widgets + macOS ImageCaptureCore) that allows you to scan over the network from any supported macOS scanner (including the **Canon MF660C Series**), rearrange pages, merge existing PDFs, and save a final PDF document without losing vector quality.
 
-Author: **Giuseppe Marco Randazzo** <gmrandazzo@gmail.com>
+No proprietary drivers needed — macOS talks to the scanner natively via AirScan (eSCL over IPP), the same technology Apple's Image Capture app uses.
 
-## License
+### 1. Install dependencies
 
-TiScannUtility is free software licensed under the **GNU Affero General Public
-License v3.0 or later** — see [LICENSE](LICENSE). Copyright (C) 2026 Giuseppe
-Marco Randazzo.
+Requires macOS 14+, Xcode Command Line Tools, CMake, and Qt 6 from Homebrew.
 
-**Qt linking:** this program links against Qt **dynamically** (shared
-libraries). The Qt libraries remain under their own license, the **GNU Lesser
-General Public License (LGPL) v3**, and are not covered by the AGPL. Dynamic
-linking is deliberate — it keeps the Qt framework under LGPL as required for
-closed/AGPL combination. Static linking of Qt is not supported by this build.
-
-## Features
-
-- **Scan** with options: resolution (150/300 dpi, higher values are snapped to
-  what the scanner supports), Color / Grayscale / Black & White (B&W is
-  software-thresholded 1-bit, keeps PDFs small), simplex feeder or flatbed
-  (chosen automatically).
-- **Add PDF…** imports every page of an existing PDF as draggable thumbnails.
-  Imported pages are re-drawn (not rasterized), so vector content stays sharp.
-- **Reorder** pages with the Move Left / Move Right buttons (or by dragging
-  thumbnails).
-- **Delete** pages (button or Delete key).
-- **Rotate** pages left/right (90° steps, applied losslessly when saving).
-- **Preview** any page: double-click its thumbnail to zoom and read it.
-- **Save Final PDF…** assembles everything in the order shown and opens the
-  result in Preview.
-
-Note: the MF660C's document feeder advertises itself as *simplex* over the
-network (no duplex via AirScan), so the Duplex checkbox stays disabled. For
-double-sided documents, scan the stack face-up, then flip it over and scan
-again — the app merges everything into one document.
-
-## Build
-
-Requires: macOS 14+, Xcode Command Line Tools, CMake, and Qt 6 from Homebrew
-(shared build — the default).
-
-```sh
+```bash
 brew install qt cmake
+```
+
+### 2. Build the application
+
+Configure the project and build it directly on your machine:
+
+```bash
 cmake -B build -DCMAKE_PREFIX_PATH="$(brew --prefix qt)" -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
-The app is `build/TiScannUtility.app`. Run it from the build tree or copy it
-anywhere — it links dynamically against the Homebrew Qt, so keep Qt installed.
+The app is built at `build/TiScannUtility.app`. Because it dynamically links to Qt via Homebrew, you should run `macdeployqt` to bundle the libraries and make the application completely standalone:
 
-## Use
-
-1. Make sure the Mac and the printer are on the same network.
-2. Launch **TiScannUtility** — after a few seconds the scanner appears in the
-   dropdown (it opens its session automatically; first connection takes ~2s).
-3. Put paper in the feeder (or on the glass) and click **Scan**. Pages appear
-   as thumbnails as they arrive.
-4. Reorder with Move Left/Right (or drag), fix orientation with **Rotate**,
-   double-click a page to preview it, drop mistakes with **Delete Page**,
-   optionally **Add PDF…** to merge an existing file.
-5. **Save Final PDF…** — done; the document opens in Preview.
-
-If macOS asks to let the app find devices on the local network, allow it.
-
-## Editing the UI
-
-The main window layout lives in `src/mainwindow.ui` — open it with Designer:
-
-```sh
-open /opt/homebrew/opt/qt/libexec/Designer.app src/mainwindow.ui
+```bash
+$(brew --prefix qt)/bin/macdeployqt build/TiScannUtility.app
 ```
 
-Behavior (scanning, thumbnails, saving) stays in C++ (`MainWindow.cpp`).
+### 3. Use the application
 
-## Self tests (no GUI)
+1. Make sure your Mac and the printer/scanner are on the same local network.
+2. Launch **TiScannUtility** from the `build` directory. Wait a few seconds for scanners on your network to be automatically discovered.
+3. Choose the **Source** (Automatic, Flatbed, or Feeder), set options like DPI and Color Mode, load your document, and click **Scan**.
+4. Reorder pages using the **Move Left/Right** buttons (or drag and drop). Double-click a thumbnail for a high-res preview.
+5. Use **Add PDF...** to merge pages from an existing PDF losslessly. 
+6. Click **Save Final PDF...** to finish and open the document in Preview.
 
-```sh
-build/TiScannUtility.app/Contents/MacOS/TiScannUtility --selftest   # discovery + session
-build/TiScannUtility.app/Contents/MacOS/TiScannUtility --pdftest    # PDF assembly pipeline
+### 4. Check that it is working via Self Tests
+
+If you run into issues, you can run headless tests from the terminal to diagnose the problem:
+
+```bash
+# Tests device discovery and opens a network session
+build/TiScannUtility.app/Contents/MacOS/TiScannUtility --selftest   
+
+# Tests the CoreGraphics PDF assembly and rotation pipeline
+build/TiScannUtility.app/Contents/MacOS/TiScannUtility --pdftest    
 ```
 
-## How it works
+## Features
+
+- **Scan Options**: Resolution (150/300/600 dpi), Color Modes (Color / Grayscale / Black & White via software thresholding to keep sizes small).
+- **Multiple Sources**: Smart automatic switching between the Automatic Document Feeder (ADF) and the Flatbed glass.
+- **Add PDF**: Imports every page of an existing PDF as draggable thumbnails. Imported pages are re-drawn natively via CoreGraphics (not rasterized), so vector text stays perfectly sharp.
+- **Organize & Rotate**: Move pages, rotate in 90° steps losslessly, or delete mistakes.
+
+## Project structure
 
 ```
-src/mainwindow.ui    Layout & widgets — edit with Qt Designer
-src/MainWindow.cpp   Behavior: device/options handling, thumbnails, saving
-src/PreviewDialog.*  Zoomable page preview (double-click a thumbnail)
-src/ScannerBackend.* ICDeviceBrowser/ICScannerDevice bridge (Objective-C++)
-src/PdfAssembler.*   CGPDFContext writer: images + imported PDF pages, rotations
-src/ImageConversion.* QImage <-> CGImage helpers
+TiScannUtility/
+├── src/
+│   ├── main.cpp          # Entry point and self-tests
+│   ├── MainWindow.*      # UI behavior, device handling, and thumbnails
+│   ├── mainwindow.ui     # Layout & widgets (editable via Qt Designer)
+│   ├── ScannerBackend.*  # ICDeviceBrowser / ICScannerDevice bridge (Objective-C++)
+│   ├── PdfAssembler.*    # CoreGraphics PDF context writer and compiler
+│   ├── ImageConversion.* # QImage ↔ CGImage conversion helpers
+│   └── PreviewDialog.*   # Zoomable page preview UI
+├── tests/                # Test utilities
+├── cmake/                # Application property lists and assets
+├── CMakeLists.txt        # CMake build configuration
+├── .github/
+│   └── workflows/
+│       └── release.yml   # GitHub Actions Pipeline for automated releases
+├── .gitignore            # Git ignore file
+└── README.md             # This documentation
 ```
-
-- Scanning uses `ImageCaptureCore` memory transfer; incoming band data is
-  reassembled into images page by page.
-- Saving uses `CoreGraphics`: scanned pages are drawn at their real-world size
-  (based on scan DPI); PDF pages are drawn with `CGContextDrawPDFPage`.
 
 ## Troubleshooting
 
-- **Scanner never appears**: check the printer is awake and on the same
-  network; make sure System Settings → Privacy & Security → Local Network
-  allows TiScannUtility.
-- **"no pages received"**: the feeder was empty (or glass empty) — load paper
-  and scan again.
+- **Scanner never appears**: Ensure your printer is awake and on the same network. Also, verify that macOS allows the app to find local devices (`System Settings` → `Privacy & Security` → `Local Network`).
+- **"No pages received"**: Ensure your selected source actually has paper loaded. If the feeder is empty and you force the Feeder source, it will return nothing. Change the Source dropdown to `Automatic` or `Flatbed`.
+- **Duplex is disabled**: Many scanners (like the MF660C) advertise their document feeders as *simplex* over the network via AirScan. For double-sided documents, scan the stack face-up, flip it, scan again, and reorder the pages in the app.
+
+## AI Full Disclosure
+
+This software is developed with strong assistance from Kimi 2.8 and Gemini 3.1 Pro (High) and with humans leading the ideas, testing, and debugging. We say this openly because it shaped how the project was built. If you are not happy with AI-developed code, this software is not for you.
+
+## License
+
+This project is licensed under the **GNU Affero General Public License v3.0 or later** (AGPLv3). See `LICENSE`.
+Copyright (C) 2026 Giuseppe Marco Randazzo <gmrandazzo@gmail.com>.
+
+**Qt linking:** this program links against Qt **dynamically** (shared libraries). The Qt libraries remain under their own license, the **GNU Lesser General Public License (LGPL) v3**, and are not covered by the AGPL. Dynamic linking is deliberate — it keeps the Qt framework under LGPL as required for closed/AGPL combinations. Static linking of Qt is not supported by this build.

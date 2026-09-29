@@ -116,12 +116,14 @@ void MainWindow::rebuildDeviceCombo() {
     int selectIndex = -1;
     for (const ScannerInfo& info : devices) {
         QString label = QString::fromStdString(info.name);
-        if (!info.ready)
+        if (!info.ready) {
             label += " (connecting...)";
-        else if (info.hasDocumentFeeder)
-            label += info.supportsDuplex ? " (feeder, duplex)" : " (feeder)";
-        else
-            label += " (flatbed)";
+        } else {
+            QStringList caps;
+            if (info.hasDocumentFeeder) caps << (info.supportsDuplex ? "feeder (duplex)" : "feeder");
+            if (info.hasFlatbed) caps << "flatbed";
+            if (!caps.isEmpty()) label += " (" + caps.join(", ") + ")";
+        }
         ui->deviceCombo->addItem(label, QString::fromStdString(info.uuid));
         if (QString::fromStdString(info.uuid) == previous)
             selectIndex = ui->deviceCombo->count() - 1;
@@ -166,6 +168,7 @@ void MainWindow::onScan() {
     options.dpi = ui->dpiCombo->currentText().toInt();
     options.colorMode = ColorMode(ui->modeCombo->currentIndex());
     options.duplex = ui->duplexCheck->isChecked();
+    options.source = ScanSource(ui->sourceCombo->currentIndex());
     if (options.colorMode == ColorMode::BlackWhite && options.dpi > 300)
         statusBar()->showMessage("Note: 600 dpi B&W produces very large pages; 300 dpi is usually enough.");
 

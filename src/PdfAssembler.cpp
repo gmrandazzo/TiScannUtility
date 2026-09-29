@@ -101,11 +101,10 @@ struct PdfAssembler::Impl {
     }
 };
 
-PdfAssembler::PdfAssembler() : d(new Impl) {}
+PdfAssembler::PdfAssembler() : d(std::make_unique<Impl>()) {}
 PdfAssembler::~PdfAssembler() {
     for (auto& kv : d->openDocs) CGPDFDocumentRelease(kv.second);
     if (d->ctx) CGContextRelease(d->ctx);
-    delete d;
 }
 
 bool PdfAssembler::begin(const std::string& path, std::string* error) {
