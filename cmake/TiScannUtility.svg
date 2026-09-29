@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="scannerGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#4a5568"/>
+      <stop offset="100%" stop-color="#2d3748"/>
+    </linearGradient>
+    <linearGradient id="sheetGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#edf2f7"/>
+    </linearGradient>
+    <linearGradient id="scanBeam" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#3182ce" stop-opacity="0.2"/>
+      <stop offset="50%" stop-color="#63b3ed" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#3182ce" stop-opacity="0.2"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Document Sheet -->
+  <rect x="34" y="16" width="60" height="74" rx="4" fill="url(#sheetGrad)" stroke="#cbd5e0" stroke-width="2"/>
+  <!-- Document Lines -->
+  <line x1="44" y1="30" x2="74" y2="30" stroke="#a0aec0" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="44" y1="40" x2="84" y2="40" stroke="#cbd5e0" stroke-width="2" stroke-linecap="round"/>
+  <line x1="44" y1="48" x2="84" y2="48" stroke="#cbd5e0" stroke-width="2" stroke-linecap="round"/>
+  <line x1="44" y1="56" x2="70" y2="56" stroke="#cbd5e0" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- Scanner Base Body -->
+  <rect x="18" y="70" width="92" height="42" rx="8" fill="url(#scannerGrad)" stroke="#1a202c" stroke-width="2"/>
+  
+  <!-- Scanner Glass / Feed Slot -->
+  <rect x="28" y="76" width="72" height="12" rx="3" fill="#1a202c"/>
+  <rect x="30" y="80" width="68" height="4" rx="2" fill="url(#scanBeam)"/>
+
+  <!-- Power / Status Indicator LED -->
+  <circle cx="94" cy="98" r="3" fill="#48bb78"/>
+  <circle cx="84" cy="98" r="3" fill="#4299e1"/>
+</svg>

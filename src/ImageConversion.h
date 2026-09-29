@@ -19,6 +19,8 @@
  */
 #pragma once
 
+#if defined(__APPLE__)
+
 #include <QImage>
 
 #include <CoreGraphics/CGImage.h>
@@ -30,3 +32,6 @@ QImage qImageFromCGImage(CGImageRef image, int dpi);
 // Converts a QImage to a CGImage. Supports RGB(A) and monochrome formats.
 // The caller takes ownership of the returned CGImage (CGImageRelease).
 CGImageRef cgImageFromQImage(const QImage& image);
+
+#endif // __APPLE__
+

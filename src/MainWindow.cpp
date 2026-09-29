@@ -86,7 +86,7 @@ MainWindow::MainWindow()
         rebuildDeviceCombo();
         statusBar()->showMessage("Looking for scanners...");
     });
-    connect(ui->deviceCombo, &QComboBox::currentIndexChanged, this, [this](int) { updateDuplexAvailability(); });
+    connect(ui->deviceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { updateDuplexAvailability(); });
 
     auto* delShortcut = new QShortcut(QKeySequence::Delete, this);
     connect(delShortcut, &QShortcut::activated, this, &MainWindow::onDeleteSelected);
@@ -329,7 +329,14 @@ void MainWindow::onSave() {
             ok = assembler.appendImage(page->image, page->rotation);
         if (i % 5 == 0) QCoreApplication::processEvents();
     }
-    ok = ok && assembler.end(&err);
+    std::string endErr;
+    bool endOk = assembler.end(&endErr);
+    if (!ok) {
+        if (err.empty()) err = "Failed to append all pages to the PDF.";
+    } else if (!endOk) {
+        ok = false;
+        err = endErr;
+    }
     QApplication::restoreOverrideCursor();
 
     if (!ok) {

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=TiScannUtility
+Comment=Scan, rearrange, rotate and merge pages into a final PDF
+Exec=TiScannUtility
+Icon=TiScannUtility
+Categories=Office;Scanning;Utility;
+Terminal=false
+StartupNotify=true

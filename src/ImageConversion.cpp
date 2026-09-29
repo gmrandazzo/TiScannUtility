@@ -23,6 +23,8 @@
 #include <CoreGraphics/CGDataProvider.h>
 #include <CoreGraphics/CGColorSpace.h>
 
+#if defined(__APPLE__)
+
 QImage qImageFromCGImage(CGImageRef image, int dpi) {
     if (!image) return QImage();
     size_t w = CGImageGetWidth(image);
@@ -75,9 +77,14 @@ CGImageRef cgImageFromQImage(const QImage& source) {
     QImage* heapImg = new QImage(source.convertToFormat(QImage::Format_RGBA8888));
     CGDataProviderRef provider = CGDataProviderCreateWithData(heapImg, heapImg->constBits(), heapImg->sizeInBytes(), releaseImageData);
     if (!provider) { delete heapImg; return nullptr; }
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
     CGImageRef cg = CGImageCreate(heapImg->width(), heapImg->height(), 8, 32, size_t(heapImg->bytesPerLine()),
-                                  CGColorSpaceCreateDeviceRGB(), kCGImageAlphaNoneSkipLast,
+                                  cs, kCGImageAlphaNoneSkipLast,
                                   provider, nullptr, false, kCGRenderingIntentDefault);
+    CGColorSpaceRelease(cs);
     CGDataProviderRelease(provider);
     return cg;
 }
+
+#endif // __APPLE__
+
