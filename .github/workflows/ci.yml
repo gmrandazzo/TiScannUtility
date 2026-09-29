@@ -1,0 +1,82 @@
+name: CI Tests
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+  pull_request:
+    branches:
+      - develop
+      - main
+  workflow_dispatch:
+
+jobs:
+  test-linux:
+    name: Tests (Linux)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            g++ \
+            pkg-config \
+            qtbase5-dev \
+            libqt5svg5-dev \
+            libsane-dev \
+            libpoppler-qt5-dev \
+            poppler-utils \
+            file \
+            wget
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build TiScannUtility and unit_tests
+        run: |
+          cmake --build build -j$(nproc)
+
+      - name: Run PDF Pipeline Test
+        run: |
+          QT_QPA_PLATFORM=offscreen ./build/TiScannUtility --pdftest
+
+      - name: Run Unit & Corner-Case Tests (CTest)
+        run: |
+          ctest --test-dir build --output-on-failure
+
+  test-macos:
+    name: Tests (macOS)
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Homebrew dependencies
+        run: |
+          brew install qt cmake
+
+      - name: Configure CMake
+        run: |
+          cmake -B build \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix qt)" \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build TiScannUtility and unit_tests
+        run: |
+          cmake --build build -j$(sysctl -n hw.ncpu)
+
+      - name: Run PDF Pipeline Test
+        run: |
+          ./build/TiScannUtility.app/Contents/MacOS/TiScannUtility --pdftest
+
+      - name: Run Unit & Corner-Case Tests (CTest)
+        run: |
+          ctest --test-dir build --output-on-failure
