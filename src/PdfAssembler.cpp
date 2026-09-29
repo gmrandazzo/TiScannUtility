@@ -332,6 +332,12 @@ bool PdfAssembler::begin(const std::string& path, std::string* error) {
         if (error) *error = "Invalid output path";
         return false;
     }
+    QFileInfo fi(QString::fromStdString(path));
+    QDir parentDir = fi.dir();
+    if (!parentDir.exists()) {
+        if (error) *error = "Destination directory does not exist: " + parentDir.absolutePath().toStdString();
+        return false;
+    }
     d->targetPath = path;
     d->tempDir = std::make_unique<QTemporaryDir>();
     return true;
@@ -381,6 +387,9 @@ bool PdfAssembler::appendImage(const QImage& image, int rotationDeg) {
 bool PdfAssembler::appendPdfPage(const std::string& pdfPath, int pageIndex, int rotationDeg) {
     if (d->targetPath.empty()) return false;
     if (pageIndex < 0) return false;
+    if (!QFile::exists(QString::fromStdString(pdfPath))) return false;
+    int total = pdfPageCount(pdfPath);
+    if (pageIndex >= total) return false;
     d->pages.push_back({true, QString::fromStdString(pdfPath), pageIndex, normalizeRotation(rotationDeg)});
     return true;
 }
@@ -584,6 +593,10 @@ int PdfAssembler::pdfPageCount(const std::string& pdfPath) {
 }
 
 QImage PdfAssembler::renderPdfPage(const std::string& pdfPath, int pageIndex, int maxDim) {
+    if (pageIndex < 0 || maxDim <= 0) return QImage();
+    if (!QFile::exists(QString::fromStdString(pdfPath))) return QImage();
+    int total = pdfPageCount(pdfPath);
+    if (total <= 0 || pageIndex >= total) return QImage();
 #if defined(HAVE_POPPLER_CPP)
     auto doc = Poppler::Document::load(QString::fromStdString(pdfPath));
     if (doc && pageIndex >= 0 && pageIndex < doc->numPages()) {

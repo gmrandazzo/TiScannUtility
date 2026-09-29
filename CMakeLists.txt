@@ -133,3 +133,49 @@ if(UNIX AND NOT APPLE)
     install(FILES cmake/TiScannUtility.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
 endif()
 
+# ============================================================================
+# Unit Tests & CTest Integration
+# ============================================================================
+enable_testing()
+
+set(TEST_SOURCES
+    tests/unit_tests.cpp
+    src/PdfAssembler.cpp
+    src/PdfAssembler.h
+    src/ScannerBackend.h
+    ${PLATFORM_SOURCES}
+)
+
+add_executable(unit_tests ${TEST_SOURCES})
+target_include_directories(unit_tests PRIVATE src)
+target_link_libraries(unit_tests PRIVATE
+    Qt${QT_VERSION_MAJOR}::Widgets
+    Qt${QT_VERSION_MAJOR}::Gui
+    Qt${QT_VERSION_MAJOR}::Core
+)
+
+if(APPLE)
+    target_link_libraries(unit_tests PRIVATE
+        "-framework ImageCaptureCore"
+        "-framework CoreGraphics"
+    )
+elseif(UNIX)
+    target_link_libraries(unit_tests PRIVATE
+        ${CMAKE_DL_LIBS}
+        Threads::Threads
+    )
+    if(PKG_CONFIG_FOUND)
+        if(POPPLER_QT_FOUND)
+            target_include_directories(unit_tests PRIVATE ${POPPLER_QT_INCLUDE_DIRS})
+            target_link_libraries(unit_tests PRIVATE ${POPPLER_QT_LIBRARIES})
+        endif()
+        if(QPDF_FOUND)
+            target_include_directories(unit_tests PRIVATE ${QPDF_INCLUDE_DIRS})
+            target_link_libraries(unit_tests PRIVATE ${QPDF_LIBRARIES})
+        endif()
+    endif()
+endif()
+
+add_test(NAME TiScannUtility_UnitTests COMMAND unit_tests)
+
+

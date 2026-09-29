@@ -610,6 +610,8 @@ ScannerBackend::ScannerBackend() : d(std::make_unique<Impl>()) {}
 ScannerBackend::~ScannerBackend() {
     stopBrowsing();
     cancelScan();
+    if (d->scanThread.joinable()) d->scanThread.join();
+    if (d->browseThread.joinable()) d->browseThread.join();
     exitSaneGlobal();
 }
 

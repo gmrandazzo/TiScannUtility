@@ -41,6 +41,7 @@ jobs:
       - name: Run verification test
         run: |
           QT_QPA_PLATFORM=offscreen ./build/TiScannUtility --pdftest
+          ctest --test-dir build --output-on-failure
 
       - name: Install to AppDir
         run: |
@@ -94,6 +95,7 @@ jobs:
       - name: Run verification test
         run: |
           ./build/TiScannUtility.app/Contents/MacOS/TiScannUtility --pdftest
+          ctest --test-dir build --output-on-failure
 
       - name: Package macOS App Bundle
         run: |
