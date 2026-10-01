@@ -2,8 +2,8 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -64,8 +64,12 @@ jobs:
             --plugin qt \
             --output appimage
 
-          # Rename to standardized asset name
-          mv TiScannUtility*.AppImage TiScannUtility-x86_64.AppImage
+          # Ensure correct name without failing if it's already correct
+          for f in TiScannUtility*.AppImage; do
+            if [ "$f" != "TiScannUtility-x86_64.AppImage" ]; then
+              mv "$f" TiScannUtility-x86_64.AppImage
+            fi
+          done
 
       - name: Upload Linux AppImage artifact
         uses: actions/upload-artifact@v4
@@ -119,7 +123,7 @@ jobs:
     name: Publish GitHub Release
     needs: [build-linux, build-macos]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Checkout repository
@@ -133,6 +137,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Release v1.0.${{ github.run_number }}
           files: |
             dist/**/*
           generate_release_notes: true
