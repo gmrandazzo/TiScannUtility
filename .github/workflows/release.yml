@@ -103,6 +103,7 @@ jobs:
       - name: Package macOS App Bundle
         run: |
           macdeployqt build/TiScannUtility.app || true
+          codesign --force --deep --sign - build/TiScannUtility.app
           ditto -c -k --sequesterRsrc --keepParent build/TiScannUtility.app TiScannUtility-macOS-arm64.zip
 
       - name: Upload macOS artifact
