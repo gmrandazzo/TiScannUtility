@@ -51,6 +51,7 @@ set(COMMON_SOURCES
     src/ScannerBackend.h
     src/PdfAssembler.h
     src/PdfAssembler.cpp
+    src/resources.qrc
 )
 
 if(APPLE)
@@ -58,8 +59,10 @@ if(APPLE)
         src/ScannerBackend.mm
         src/ImageConversion.h
         src/ImageConversion.cpp
+        cmake/icon.icns
     )
     set_source_files_properties(src/ScannerBackend.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    set_source_files_properties(cmake/icon.icns PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
 elseif(WIN32)
     set(PLATFORM_SOURCES
         src/ScannerBackend_Win.cpp
@@ -97,6 +100,7 @@ if(APPLE)
         MACOSX_BUNDLE_BUNDLE_VERSION "1.0.0"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.0"
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Info.plist.in"
+        MACOSX_BUNDLE_ICON_FILE "icon.icns"
     )
 elseif(UNIX)
     find_package(Threads REQUIRED)

@@ -22,6 +22,7 @@
 #include "PdfAssembler.h"
 
 #include <QApplication>
+#include <QIcon>
 #include <QImage>
 #include <QPainter>
 #include <QTimer>
@@ -116,6 +117,7 @@ int main(int argc, char** argv) {
     bool selfTest = argc > 1 && QString::fromLocal8Bit(argv[1]) == QLatin1String("--selftest");
     bool pdfTest = argc > 1 && QString::fromLocal8Bit(argv[1]) == QLatin1String("--pdftest");
     QApplication app(argc, argv);
+    app.setWindowIcon(QIcon(":/app_icon.png"));
     if (pdfTest)
         return runPdfTest();
     if (selfTest)
