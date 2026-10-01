@@ -53,29 +53,32 @@ QImage qImageFromCGImage(CGImageRef image, int dpi) {
     return out;
 }
 
+static void releaseImageData(void *info, const void *data, size_t size) {
+    (void)data;
+    (void)size;
+    delete static_cast<QImage*>(info);
+}
+
 CGImageRef cgImageFromQImage(const QImage& source) {
     if (source.isNull()) return nullptr;
 
     if (source.format() == QImage::Format_Mono) {
         // Keep true 1-bit data: a mask paints black where a bit is set,
         // which matches Qt's Format_Mono convention (bit set = black).
-        CFDataRef data = CFDataCreate(nullptr, source.constBits(), CFIndex(source.sizeInBytes()));
-        if (!data) return nullptr;
-        CGDataProviderRef provider = CGDataProviderCreateWithCFData(data);
-        CFRelease(data);
-        CGImageRef mask = CGImageMaskCreate(source.width(), source.height(), 1, 1,
-                                            size_t(source.bytesPerLine()), provider, nullptr, false);
+        QImage* heapImg = new QImage(source);
+        CGDataProviderRef provider = CGDataProviderCreateWithData(heapImg, heapImg->constBits(), heapImg->sizeInBytes(), releaseImageData);
+        if (!provider) { delete heapImg; return nullptr; }
+        CGImageRef mask = CGImageMaskCreate(heapImg->width(), heapImg->height(), 1, 1,
+                                            size_t(heapImg->bytesPerLine()), provider, nullptr, false);
         CGDataProviderRelease(provider);
         return mask;
     }
 
-    QImage img = source.convertToFormat(QImage::Format_RGBA8888);
-    CFDataRef data = CFDataCreate(nullptr, img.constBits(), CFIndex(img.sizeInBytes()));
-    if (!data) return nullptr;
-    CGDataProviderRef provider = CGDataProviderCreateWithCFData(data);
-    CFRelease(data);
+    QImage* heapImg = new QImage(source.convertToFormat(QImage::Format_RGBA8888));
+    CGDataProviderRef provider = CGDataProviderCreateWithData(heapImg, heapImg->constBits(), heapImg->sizeInBytes(), releaseImageData);
+    if (!provider) { delete heapImg; return nullptr; }
     CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-    CGImageRef cg = CGImageCreate(img.width(), img.height(), 8, 32, size_t(img.bytesPerLine()),
+    CGImageRef cg = CGImageCreate(heapImg->width(), heapImg->height(), 8, 32, size_t(heapImg->bytesPerLine()),
                                   cs, kCGImageAlphaNoneSkipLast,
                                   provider, nullptr, false, kCGRenderingIntentDefault);
     CGColorSpaceRelease(cs);

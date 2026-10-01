@@ -234,7 +234,9 @@ static QImage thresholdToMono(const QImage& src) {
     QImage out(gray.width(), gray.height(), QImage::Format_Mono);
     out.setDotsPerMeterX(gray.dotsPerMeterX());
     out.setDotsPerMeterY(gray.dotsPerMeterY());
-    out.fill(0); // white in Qt Format_Mono
+    out.setColor(0, qRgb(255, 255, 255)); // 0 = white
+    out.setColor(1, qRgb(0, 0, 0));       // 1 = black
+    out.fill(0);                          // fill all white
     for (int y = 0; y < gray.height(); ++y) {
         const uchar* s = gray.constScanLine(y);
         uchar* d = out.scanLine(y);
@@ -300,8 +302,9 @@ struct ScannerBackend::Impl {
         }, Qt::QueuedConnection);
     }
 
-    void inspectDeviceCaps(const std::string& deviceName, bool* hasFeeder, bool* supportsDuplex) {
+    void inspectDeviceCaps(const std::string& deviceName, bool* hasFeeder, bool* hasFlatbed, bool* supportsDuplex) {
         *hasFeeder = false;
+        *hasFlatbed = true;
         *supportsDuplex = false;
         SANE_Handle h = nullptr;
         if (gSane.sane_open(deviceName.c_str(), &h) != SANE_STATUS_GOOD) return;
@@ -321,6 +324,10 @@ struct ScannerBackend::Impl {
                             src.find("feeder") != std::string::npos ||
                             src.find("automatic") != std::string::npos) {
                             *hasFeeder = true;
+                        }
+                        if (src.find("flatbed") != std::string::npos ||
+                            src.find("platen") != std::string::npos) {
+                            *hasFlatbed = true;
                         }
                         if (src.find("duplex") != std::string::npos) {
                             *supportsDuplex = true;
@@ -369,7 +376,7 @@ struct ScannerBackend::Impl {
                     info.name = vendor + " " + model;
                 }
                 info.ready = true;
-                inspectDeviceCaps(info.uuid, &info.hasDocumentFeeder, &info.supportsDuplex);
+                inspectDeviceCaps(info.uuid, &info.hasDocumentFeeder, &info.hasFlatbed, &info.supportsDuplex);
                 detected.push_back(info);
             }
         }
@@ -407,7 +414,7 @@ struct ScannerBackend::Impl {
         }
     }
 
-    void configureOptionInt(SANE_Handle h, const std::string& name, int targetVal) {
+    int configureOptionInt(SANE_Handle h, const std::string& name, int targetVal) {
         SANE_Int numOpts = 0;
         gSane.sane_control_option(h, 0, SANE_ACTION_GET_VALUE, &numOpts, nullptr);
         for (SANE_Int i = 1; i < numOpts; ++i) {
@@ -417,14 +424,15 @@ struct ScannerBackend::Impl {
                 if (desc->type == SANE_TYPE_INT) {
                     SANE_Int val = targetVal;
                     gSane.sane_control_option(h, i, SANE_ACTION_SET_VALUE, &val, nullptr);
-                    return;
+                    return int(val);
                 } else if (desc->type == SANE_TYPE_FIXED) {
                     SANE_Int val = targetVal << 16;
                     gSane.sane_control_option(h, i, SANE_ACTION_SET_VALUE, &val, nullptr);
-                    return;
+                    return int(val >> 16);
                 }
             }
         }
+        return targetVal;
     }
 
     void scanWorker(std::string deviceUuid, ScanOptions options) {
@@ -446,7 +454,7 @@ struct ScannerBackend::Impl {
         }
 
         // Configure Resolution
-        configureOptionInt(h, "resolution", options.dpi);
+        int actualDpi = configureOptionInt(h, "resolution", options.dpi);
 
         // Configure Color Mode
         if (options.colorMode == ColorMode::Color) {
@@ -456,7 +464,13 @@ struct ScannerBackend::Impl {
             configureOptionString(h, "mode", {"Gray", "Grayscale", "Grey", "Color"});
         }
 
-        // Configure Source / Duplex if ADF requested
+        // Configure Source / Duplex
+        if (options.source == ScanSource::Flatbed) {
+            configureOptionString(h, "source", {"Flatbed", "Platen", "Normal"});
+        } else if (options.source == ScanSource::Feeder) {
+            configureOptionString(h, "source", {"ADF", "Automatic Document Feeder", "Feeder"});
+        }
+
         if (options.duplex) {
             configureOptionString(h, "source", {"ADF Duplex", "Duplex", "Automatic Document Feeder", "ADF"});
             configureOptionString(h, "duplex", {"true", "yes", "on", "1"});
@@ -554,7 +568,8 @@ struct ScannerBackend::Impl {
                 }
 
                 if (!pageImg.isNull()) {
-                    int dpm = int(options.dpi / 0.0254 + 0.5);
+                    int dpiToUse = actualDpi > 0 ? actualDpi : options.dpi;
+                    int dpm = int(dpiToUse / 0.0254 + 0.5);
                     pageImg.setDotsPerMeterX(dpm);
                     pageImg.setDotsPerMeterY(dpm);
 
@@ -594,12 +609,13 @@ struct ScannerBackend::Impl {
 // ---------------------------------------------------------------------------
 // ScannerBackend Public API (Linux / SANE)
 // ---------------------------------------------------------------------------
-ScannerBackend::ScannerBackend() : d(new Impl) {}
+ScannerBackend::ScannerBackend() : d(std::make_unique<Impl>()) {}
 
 ScannerBackend::~ScannerBackend() {
     stopBrowsing();
     cancelScan();
-    delete d;
+    if (d->scanThread.joinable()) d->scanThread.join();
+    if (d->browseThread.joinable()) d->browseThread.join();
     exitSaneGlobal();
 }
 

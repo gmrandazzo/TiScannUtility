@@ -24,13 +24,17 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include <memory>
+
 
 enum class ColorMode { Color, Grayscale, BlackWhite };
+enum class ScanSource { Automatic, Flatbed, Feeder };
 
 struct ScanOptions {
     int dpi = 300;
     ColorMode colorMode = ColorMode::Color;
     bool duplex = false;
+    ScanSource source = ScanSource::Automatic;
 };
 
 struct ScannerInfo {
@@ -38,6 +42,7 @@ struct ScannerInfo {
     std::string name;
     bool ready = false;             // session open, capabilities known
     bool hasDocumentFeeder = false;
+    bool hasFlatbed = false;
     bool supportsDuplex = false;
 };
 
@@ -63,5 +68,5 @@ public:
     struct Impl;
 
 private:
-    Impl* d;
+    std::unique_ptr<Impl> d;
 };

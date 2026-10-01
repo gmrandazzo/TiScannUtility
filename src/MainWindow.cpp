@@ -26,6 +26,7 @@
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QCloseEvent>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileDialog>
@@ -38,6 +39,8 @@
 #include <QProgressBar>
 #include <QShortcut>
 #include <QStatusBar>
+#include <QTemporaryDir>
+#include <QTimer>
 #include <QUrl>
 #include <QVariant>
 
@@ -51,9 +54,21 @@ QString rotationSuffix(int rotation) {
 }
 } // namespace
 
+QImage PageItem::fullImage() const {
+    if (isPdf) {
+        return PdfAssembler::renderPdfPage(pdfPath.toStdString(), pdfPage, 2400);
+    }
+    if (!scratchPath.isEmpty() && QFile::exists(scratchPath)) {
+        return QImage(scratchPath);
+    }
+    return QImage();
+}
+
 MainWindow::MainWindow()
     : ui(new Ui::MainWindow) {
     ui->setupUi(this);
+
+    scratchDir = std::make_unique<QTemporaryDir>();
 
     ui->duplexCheck->setToolTip("Scan both sides (needs a duplex document feeder)");
 
@@ -64,6 +79,17 @@ MainWindow::MainWindow()
     statusBar()->addPermanentWidget(busyBar);
     statusBar()->showMessage("Looking for scanners...");
 
+    scanTimeoutTimer = new QTimer(this);
+    scanTimeoutTimer->setSingleShot(true);
+    connect(scanTimeoutTimer, &QTimer::timeout, this, [this] {
+        if (scanning) {
+            backend.cancelScan();
+            scanning = false;
+            setBusy(false, "Scan timed out — scanner did not respond");
+            QMessageBox::warning(this, "Scan Timeout", "The scanner took too long to respond. The scan operation was cancelled.");
+        }
+    });
+
     // --- backend wiring (all callbacks arrive on the main thread) ---
     backend.setDeviceListCallback([this](const std::vector<ScannerInfo>& infos) {
         devices = infos;
@@ -72,8 +98,12 @@ MainWindow::MainWindow()
     backend.setStatusCallback([this](const std::string& msg) {
         statusBar()->showMessage(QString::fromStdString(msg));
     });
-    backend.setPageCallback([this](const QImage& img) { addScannedPage(img); });
+    backend.setPageCallback([this](const QImage& img) {
+        scanTimeoutTimer->start(90000); // reset 90s timeout on each incoming page
+        addScannedPage(img);
+    });
     backend.setScanFinishedCallback([this](bool ok, const std::string& err) {
+        scanTimeoutTimer->stop();
         scanning = false;
         setBusy(false, ok ? "Scan finished" : QString::fromStdString(err));
         if (!ok && err != "cancelled")
@@ -95,9 +125,7 @@ MainWindow::MainWindow()
     connect(ui->list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
         PageItem* page = pageOf(item);
         if (!page) return;
-        QImage full = page->isPdf
-            ? PdfAssembler::renderPdfPage(page->pdfPath.toStdString(), page->pdfPage, 2400)
-            : page->image;
+        QImage full = page->fullImage();
         if (full.isNull()) return;
         if (page->rotation)
             full = full.transformed(QTransform().rotate(page->rotation), Qt::SmoothTransformation);
@@ -116,12 +144,14 @@ void MainWindow::rebuildDeviceCombo() {
     int selectIndex = -1;
     for (const ScannerInfo& info : devices) {
         QString label = QString::fromStdString(info.name);
-        if (!info.ready)
+        if (!info.ready) {
             label += " (connecting...)";
-        else if (info.hasDocumentFeeder)
-            label += info.supportsDuplex ? " (feeder, duplex)" : " (feeder)";
-        else
-            label += " (flatbed)";
+        } else {
+            QStringList caps;
+            if (info.hasDocumentFeeder) caps << (info.supportsDuplex ? "feeder (duplex)" : "feeder");
+            if (info.hasFlatbed) caps << "flatbed";
+            if (!caps.isEmpty()) label += " (" + caps.join(", ") + ")";
+        }
         ui->deviceCombo->addItem(label, QString::fromStdString(info.uuid));
         if (QString::fromStdString(info.uuid) == previous)
             selectIndex = ui->deviceCombo->count() - 1;
@@ -153,7 +183,11 @@ void MainWindow::setBusy(bool busy, const QString& message) {
     ui->scanBtn->setEnabled(!busy && ui->deviceCombo->count() > 0);
     ui->cancelBtn->setVisible(busy);
     ui->scanBtn->setVisible(!busy);
-    ui->duplexCheck->setEnabled(!busy && ui->duplexCheck->isEnabled());
+    if (busy) {
+        ui->duplexCheck->setEnabled(false);
+    } else {
+        updateDuplexAvailability();
+    }
     if (!message.isEmpty()) statusBar()->showMessage(message);
 }
 
@@ -166,23 +200,38 @@ void MainWindow::onScan() {
     options.dpi = ui->dpiCombo->currentText().toInt();
     options.colorMode = ColorMode(ui->modeCombo->currentIndex());
     options.duplex = ui->duplexCheck->isChecked();
+    options.source = ScanSource(ui->sourceCombo->currentIndex());
     if (options.colorMode == ColorMode::BlackWhite && options.dpi > 300)
         statusBar()->showMessage("Note: 600 dpi B&W produces very large pages; 300 dpi is usually enough.");
 
     scanning = true;
     setBusy(true, "Scanning — load your document and wait...");
+    scanTimeoutTimer->start(90000); // 90 second timeout guard
     backend.scan(uuid.toStdString(), options);
 }
 
 void MainWindow::onCancel() {
+    scanTimeoutTimer->stop();
     backend.cancelScan();
 }
 
 void MainWindow::addScannedPage(const QImage& img) {
     if (img.isNull()) return;
     auto page = std::make_unique<PageItem>();
-    page->image = img;
     page->label = QString("Scan %1").arg(++scanCounter);
+    
+    // Cache thumbnail in memory
+    page->thumb = img.scaledToWidth(kThumbWidth, Qt::SmoothTransformation);
+
+    // Stream full-resolution page to scratch file on disk to prevent RAM exhaustion
+    if (!scratchDir || !scratchDir->isValid()) {
+        scratchDir = std::make_unique<QTemporaryDir>();
+    }
+    QString scratchFile = scratchDir->filePath(QString("page_%1.png").arg(scanCounter));
+    if (img.save(scratchFile, "PNG")) {
+        page->scratchPath = scratchFile;
+    }
+
     pages.push_back(std::move(page));
     auto* item = new QListWidgetItem(ui->list);
     item->setData(Qt::UserRole, QVariant::fromValue(static_cast<void*>(pages.back().get())));
@@ -209,15 +258,15 @@ void MainWindow::addPdfPageItem(const QString& path, int pageIndex, int total) {
     statusBar()->showMessage(QString("Importing PDF: page %1/%2").arg(pageIndex + 1).arg(total));
 }
 
-QImage MainWindow::makeThumb(const PageItem& page) {
-    QImage src = page.isPdf
-        ? PdfAssembler::renderPdfPage(page.pdfPath.toStdString(), page.pdfPage, 480)
-        : page.image;
-    if (src.isNull()) return QImage();
-    QImage small = src.scaledToWidth(kThumbWidth, Qt::SmoothTransformation);
+QImage MainWindow::makeThumb(PageItem& page) {
+    if (page.thumb.isNull()) {
+        QImage src = page.fullImage();
+        if (src.isNull()) return QImage();
+        page.thumb = src.scaledToWidth(kThumbWidth, Qt::SmoothTransformation);
+    }
     if (page.rotation)
-        small = small.transformed(QTransform().rotate(page.rotation), Qt::SmoothTransformation);
-    return small;
+        return page.thumb.transformed(QTransform().rotate(page.rotation), Qt::SmoothTransformation);
+    return page.thumb;
 }
 
 void MainWindow::refreshThumb(QListWidgetItem* item, PageItem* page) {
@@ -239,20 +288,40 @@ QList<QListWidgetItem*> MainWindow::selectedPageItems() const {
 }
 
 void MainWindow::onAddPdf() {
+    if (isProcessing) return;
     QString path = QFileDialog::getOpenFileName(this, "Add PDF pages", QDir::homePath(), "PDF files (*.pdf)");
     if (path.isEmpty()) return;
     int n = PdfAssembler::pdfPageCount(path.toStdString());
     if (n <= 0) {
-        QMessageBox::warning(this, "Add PDF", "Could not read this PDF file.");
+        QMessageBox::warning(this, "Add PDF", "Could not read this PDF file. It may be password-protected or corrupted.");
         return;
     }
+    isProcessing = true;
+    ui->centralwidget->setEnabled(false);
     QApplication::setOverrideCursor(Qt::WaitCursor);
+    int importedCount = 0;
+    int skippedCount = 0;
     for (int i = 0; i < n; ++i) {
+        // Quick verification: check if page can be previewed/read
+        QImage previewCheck = PdfAssembler::renderPdfPage(path.toStdString(), i, 100);
+        if (previewCheck.isNull()) {
+            ++skippedCount;
+            continue;
+        }
         addPdfPageItem(path, i, n);
+        ++importedCount;
         if (i % 10 == 0) QCoreApplication::processEvents();
     }
     QApplication::restoreOverrideCursor();
-    statusBar()->showMessage(QString("Imported %1 page(s) from %2").arg(n).arg(QFileInfo(path).fileName()));
+    ui->centralwidget->setEnabled(true);
+    isProcessing = false;
+
+    if (skippedCount > 0) {
+        QMessageBox::information(this, "PDF Import Notice",
+            QString("Imported %1 page(s). Skipped %2 unreadable or damaged page(s).")
+                .arg(importedCount).arg(skippedCount));
+    }
+    statusBar()->showMessage(QString("Imported %1 page(s) from %2").arg(importedCount).arg(QFileInfo(path).fileName()));
 }
 
 void MainWindow::onDeleteSelected() {
@@ -305,6 +374,7 @@ void MainWindow::moveCurrentRow(int delta) {
 }
 
 void MainWindow::onSave() {
+    if (isProcessing) return;
     if (ui->list->count() == 0) {
         QMessageBox::information(this, "Save", "No pages to save yet. Scan or add a PDF first.");
         return;
@@ -313,6 +383,8 @@ void MainWindow::onSave() {
     if (path.isEmpty()) return;
     if (!path.endsWith(".pdf", Qt::CaseInsensitive)) path += ".pdf";
 
+    isProcessing = true;
+    ui->centralwidget->setEnabled(false);
     QApplication::setOverrideCursor(Qt::WaitCursor);
     PdfAssembler assembler;
     std::string err;
@@ -320,21 +392,25 @@ void MainWindow::onSave() {
     for (int i = 0; ok && i < ui->list->count(); ++i) {
         PageItem* page = pageOf(ui->list->item(i));
         if (!page) continue;
-        if (page->isPdf)
+        if (page->isPdf) {
             ok = assembler.appendPdfPage(page->pdfPath.toStdString(), page->pdfPage, page->rotation);
-        else
-            ok = assembler.appendImage(page->image, page->rotation);
+        } else {
+            QImage img = page->fullImage();
+            ok = assembler.appendImage(img, page->rotation);
+        }
         if (i % 5 == 0) QCoreApplication::processEvents();
     }
     std::string endErr;
     bool endOk = assembler.end(&endErr);
     if (!ok) {
-        if (err.empty()) err = "Failed to append all pages to the PDF.";
+        if (err.empty()) err = "Failed to assemble all pages into the PDF.";
     } else if (!endOk) {
         ok = false;
-        err = endErr;
+        err = endErr.empty() ? "Failed to finalize the PDF file." : endErr;
     }
     QApplication::restoreOverrideCursor();
+    ui->centralwidget->setEnabled(true);
+    isProcessing = false;
 
     if (!ok) {
         QMessageBox::critical(this, "Save", QString("Could not save PDF:\n%1").arg(QString::fromStdString(err)));
@@ -342,6 +418,32 @@ void MainWindow::onSave() {
     }
     statusBar()->showMessage(QString("Saved %1 page(s) to %2").arg(ui->list->count()).arg(path));
     QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    if (scanning) {
+        auto answer = QMessageBox::question(this, "Scan in Progress",
+            "A scan is currently running. Do you want to cancel the scan and exit?",
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (answer != QMessageBox::Yes) {
+            event->ignore();
+            return;
+        }
+        backend.cancelScan();
+    } else if (!pages.empty()) {
+        auto answer = QMessageBox::question(this, "Unsaved Pages",
+            QString("You have %1 unsaved page(s). Are you sure you want to discard them and exit?")
+                .arg(pages.size()),
+            QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Cancel);
+        if (answer != QMessageBox::Discard) {
+            event->ignore();
+            return;
+        }
+    }
+    if (scratchDir) {
+        scratchDir->remove();
+    }
+    event->accept();
 }
 
 void MainWindow::onAbout() {
@@ -355,5 +457,5 @@ void MainWindow::onAbout() {
 }
 
 void MainWindow::onClose() {
-    QApplication::quit();
+    close();
 }

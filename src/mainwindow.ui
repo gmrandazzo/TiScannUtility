@@ -122,6 +122,32 @@
        </widget>
       </item>
       <item>
+       <widget class="QLabel" name="sourceLabel">
+        <property name="text">
+         <string>Source:</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QComboBox" name="sourceCombo">
+        <item>
+         <property name="text">
+          <string>Automatic</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>Flatbed</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>Feeder</string>
+         </property>
+        </item>
+       </widget>
+      </item>
+      <item>
        <widget class="QCheckBox" name="duplexCheck">
         <property name="enabled">
          <bool>false</bool>

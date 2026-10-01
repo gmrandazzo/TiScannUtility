@@ -27,6 +27,7 @@
 #include <CoreGraphics/CGContext.h>
 #include <CoreGraphics/CGPDFContext.h>
 #include <CoreGraphics/CGBitmapContext.h>
+#include <QFile>
 
 #include <cmath>
 #include <map>
@@ -54,16 +55,16 @@ CFURLRef makeUrl(const std::string& path) {
 void applyRotation(CGContextRef ctx, int rotation, double w, double h) {
     switch (rotation) {
     case 90:
-        CGContextTranslateCTM(ctx, CGFloat(w), 0);
-        CGContextRotateCTM(ctx, CGFloat(M_PI_2));
+        CGContextTranslateCTM(ctx, 0, CGFloat(w));
+        CGContextRotateCTM(ctx, CGFloat(-M_PI_2));
         break;
     case 180:
         CGContextTranslateCTM(ctx, CGFloat(w), CGFloat(h));
         CGContextRotateCTM(ctx, CGFloat(M_PI));
         break;
     case 270:
-        CGContextTranslateCTM(ctx, 0, CGFloat(h));
-        CGContextRotateCTM(ctx, CGFloat(-M_PI_2));
+        CGContextTranslateCTM(ctx, CGFloat(h), 0);
+        CGContextRotateCTM(ctx, CGFloat(M_PI_2));
         break;
     default:
         break;
@@ -73,6 +74,8 @@ void applyRotation(CGContextRef ctx, int rotation, double w, double h) {
 } // namespace
 
 struct PdfAssembler::Impl {
+    std::string targetPath;
+    std::string tempPath;
     CGContextRef ctx = nullptr;
     std::map<std::string, CGPDFDocumentRef> openDocs;
 
@@ -103,15 +106,24 @@ struct PdfAssembler::Impl {
     }
 };
 
-PdfAssembler::PdfAssembler() : d(new Impl) {}
+PdfAssembler::PdfAssembler() : d(std::make_unique<Impl>()) {}
 PdfAssembler::~PdfAssembler() {
     for (auto& kv : d->openDocs) CGPDFDocumentRelease(kv.second);
     if (d->ctx) CGContextRelease(d->ctx);
-    delete d;
+    if (!d->tempPath.empty() && d->tempPath != d->targetPath) {
+        QFile::remove(QString::fromStdString(d->tempPath));
+    }
 }
 
 bool PdfAssembler::begin(const std::string& path, std::string* error) {
-    CFURLRef url = makeUrl(path);
+    if (path.empty()) {
+        if (error) *error = "invalid output path";
+        return false;
+    }
+    d->targetPath = path;
+    d->tempPath = path + ".tmp.pdf";
+
+    CFURLRef url = makeUrl(d->tempPath);
     if (!url) {
         if (error) *error = "invalid output path";
         return false;
@@ -119,7 +131,7 @@ bool PdfAssembler::begin(const std::string& path, std::string* error) {
     d->ctx = CGPDFContextCreateWithURL(url, nullptr, nullptr);
     CFRelease(url);
     if (!d->ctx) {
-        if (error) *error = "cannot create PDF at: " + path;
+        if (error) *error = "cannot create PDF at: " + d->tempPath;
         return false;
     }
     return true;
@@ -159,13 +171,15 @@ bool PdfAssembler::appendPdfPage(const std::string& pdfPath, int pageIndex, int 
     if (CGRectIsEmpty(srcBox)) srcBox = CGPDFPageGetBoxRect(page, kCGPDFCropBox);
     if (CGRectIsEmpty(srcBox)) return false;
 
-    int rotation = normalizeRotation(rotationDeg);
-    bool swap = (rotation == 90 || rotation == 270);
+    int intrinsicRotation = CGPDFPageGetRotationAngle(page);
+    int totalRotation = normalizeRotation(rotationDeg + intrinsicRotation);
+    bool swap = (totalRotation == 90 || totalRotation == 270);
     double w = srcBox.size.width, h = srcBox.size.height;
     CGRect pageBox = CGRectMake(0, 0, CGFloat(swap ? h : w), CGFloat(swap ? w : h));
     if (!d->beginPage(pageBox)) return false;
 
-    applyRotation(d->ctx, rotation, w, h);
+    applyRotation(d->ctx, totalRotation, w, h);
+    CGContextTranslateCTM(d->ctx, -srcBox.origin.x, -srcBox.origin.y);
     CGContextDrawPDFPage(d->ctx, page);
     CGPDFContextEndPage(d->ctx);
     return true;
@@ -180,6 +194,18 @@ bool PdfAssembler::end(std::string* error) {
     d->ctx = nullptr;
     for (auto& kv : d->openDocs) CGPDFDocumentRelease(kv.second);
     d->openDocs.clear();
+
+    if (d->tempPath != d->targetPath) {
+        QString qTarget = QString::fromStdString(d->targetPath);
+        QString qTemp = QString::fromStdString(d->tempPath);
+        if (QFile::exists(qTarget)) {
+            QFile::remove(qTarget);
+        }
+        if (!QFile::rename(qTemp, qTarget)) {
+            if (error) *error = "Failed to rename temporary file to destination: " + d->targetPath;
+            return false;
+        }
+    }
     return true;
 }
 
@@ -208,15 +234,21 @@ QImage PdfAssembler::renderPdfPage(const std::string& pdfPath, int pageIndex, in
     CGRect box = CGPDFPageGetBoxRect(page, kCGPDFMediaBox);
     if (CGRectIsEmpty(box)) box = CGPDFPageGetBoxRect(page, kCGPDFCropBox);
 
+    int rot = CGPDFPageGetRotationAngle(page) % 360;
+    if (rot < 0) rot += 360;
+    bool swap = (rot == 90 || rot == 270);
+    double srcW = swap ? box.size.height : box.size.width;
+    double srcH = swap ? box.size.width : box.size.height;
+
     double scale = 1.0;
-    if (box.size.width > box.size.height)
-        scale = maxDim / box.size.width;
+    if (srcW > srcH)
+        scale = maxDim / srcW;
     else
-        scale = maxDim / box.size.height;
+        scale = maxDim / srcH;
     if (scale <= 0) scale = 1.0;
 
-    int w = int(std::lround(box.size.width * scale));
-    int h = int(std::lround(box.size.height * scale));
+    int w = int(std::lround(srcW * scale));
+    int h = int(std::lround(srcH * scale));
     if (w <= 0 || h <= 0) {
         CGPDFDocumentRelease(doc);
         return QImage();
@@ -234,6 +266,8 @@ QImage PdfAssembler::renderPdfPage(const std::string& pdfPath, int pageIndex, in
         return QImage();
     }
     CGContextScaleCTM(ctx, CGFloat(scale), CGFloat(scale));
+    applyRotation(ctx, rot, box.size.width, box.size.height);
+    CGContextTranslateCTM(ctx, -box.origin.x, -box.origin.y);
     CGContextDrawPDFPage(ctx, page);
     CGContextRelease(ctx);
     CGPDFDocumentRelease(doc);
@@ -321,17 +355,22 @@ struct PdfAssembler::Impl {
     }
 };
 
-PdfAssembler::PdfAssembler() : d(new Impl) {}
+PdfAssembler::PdfAssembler() : d(std::make_unique<Impl>()) {}
 
 PdfAssembler::~PdfAssembler() {
     d->cleanup();
-    delete d;
 }
 
 bool PdfAssembler::begin(const std::string& path, std::string* error) {
     d->cleanup();
     if (path.empty()) {
         if (error) *error = "Invalid output path";
+        return false;
+    }
+    QFileInfo fi(QString::fromStdString(path));
+    QDir parentDir = fi.dir();
+    if (!parentDir.exists()) {
+        if (error) *error = "Destination directory does not exist: " + parentDir.absolutePath().toStdString();
         return false;
     }
     d->targetPath = path;
@@ -383,6 +422,9 @@ bool PdfAssembler::appendImage(const QImage& image, int rotationDeg) {
 bool PdfAssembler::appendPdfPage(const std::string& pdfPath, int pageIndex, int rotationDeg) {
     if (d->targetPath.empty()) return false;
     if (pageIndex < 0) return false;
+    if (!QFile::exists(QString::fromStdString(pdfPath))) return false;
+    int total = pdfPageCount(pdfPath);
+    if (pageIndex >= total) return false;
     d->pages.push_back({true, QString::fromStdString(pdfPath), pageIndex, normalizeRotation(rotationDeg)});
     return true;
 }
@@ -396,6 +438,9 @@ bool PdfAssembler::end(std::string* error) {
         d->cleanup();
         return true;
     }
+
+    QString finalTarget = QString::fromStdString(d->targetPath);
+    QString tempOut = d->tempDir ? d->tempDir->filePath("assembled_output.pdf") : (finalTarget + ".tmp.pdf");
 
 #if defined(HAVE_QPDF_CPP)
     try {
@@ -422,8 +467,15 @@ bool PdfAssembler::end(std::string* error) {
                 outHelper.addPage(page, false);
             }
         }
-        QPDFWriter writer(outPdf, d->targetPath.c_str());
+        QPDFWriter writer(outPdf, tempOut.toStdString().c_str());
         writer.write();
+        
+        if (QFile::exists(finalTarget)) QFile::remove(finalTarget);
+        if (!QFile::rename(tempOut, finalTarget)) {
+            if (error) *error = "Failed to move temporary PDF to destination: " + d->targetPath;
+            d->cleanup();
+            return false;
+        }
         d->cleanup();
         return true;
     } catch (const std::exception& e) {
@@ -447,12 +499,15 @@ bool PdfAssembler::end(std::string* error) {
             }
             args << range;
         }
-        args << "--" << QString::fromStdString(d->targetPath);
+        args << "--" << tempOut;
         QProcess proc;
         proc.start(qpdfExe, args);
-        if (proc.waitForFinished(60000) && proc.exitCode() == 0) {
-            d->cleanup();
-            return true;
+        if (proc.waitForFinished(60000) && proc.exitCode() == 0 && QFile::exists(tempOut)) {
+            if (QFile::exists(finalTarget)) QFile::remove(finalTarget);
+            if (QFile::rename(tempOut, finalTarget)) {
+                d->cleanup();
+                return true;
+            }
         }
     }
 
@@ -509,18 +564,21 @@ bool PdfAssembler::end(std::string* error) {
 
         if (allGood && !pageFiles.isEmpty()) {
             QStringList uniteArgs = pageFiles;
-            uniteArgs << QString::fromStdString(d->targetPath);
+            uniteArgs << tempOut;
             QProcess unite;
             unite.start(pdfuniteExe, uniteArgs);
-            if (unite.waitForFinished(60000) && unite.exitCode() == 0) {
-                d->cleanup();
-                return true;
+            if (unite.waitForFinished(60000) && unite.exitCode() == 0 && QFile::exists(tempOut)) {
+                if (QFile::exists(finalTarget)) QFile::remove(finalTarget);
+                if (QFile::rename(tempOut, finalTarget)) {
+                    d->cleanup();
+                    return true;
+                }
             }
         }
     }
 
     // Pure Qt fallback: QPdfWriter rendering each page
-    QPdfWriter writer(QString::fromStdString(d->targetPath));
+    QPdfWriter writer(tempOut);
     writer.setResolution(300);
     QPainter painter;
     bool first = true;
@@ -548,6 +606,14 @@ bool PdfAssembler::end(std::string* error) {
         painter.restore();
     }
     if (!first) painter.end();
+    if (QFile::exists(tempOut)) {
+        if (QFile::exists(finalTarget)) QFile::remove(finalTarget);
+        if (!QFile::rename(tempOut, finalTarget)) {
+            if (error) *error = "Failed to move temporary PDF to destination: " + d->targetPath;
+            d->cleanup();
+            return false;
+        }
+    }
     d->cleanup();
     return true;
 #endif
@@ -586,6 +652,10 @@ int PdfAssembler::pdfPageCount(const std::string& pdfPath) {
 }
 
 QImage PdfAssembler::renderPdfPage(const std::string& pdfPath, int pageIndex, int maxDim) {
+    if (pageIndex < 0 || maxDim <= 0) return QImage();
+    if (!QFile::exists(QString::fromStdString(pdfPath))) return QImage();
+    int total = pdfPageCount(pdfPath);
+    if (total <= 0 || pageIndex >= total) return QImage();
 #if defined(HAVE_POPPLER_CPP)
     auto doc = Poppler::Document::load(QString::fromStdString(pdfPath));
     if (doc && pageIndex >= 0 && pageIndex < doc->numPages()) {

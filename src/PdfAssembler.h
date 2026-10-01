@@ -22,6 +22,7 @@
 #include <QImage>
 
 #include <string>
+#include <memory>
 
 // Builds a PDF document from scanned images and/or pages of existing PDF files.
 // Usage: begin() -> appendImage()/appendPdfPage() in page order -> end().
@@ -44,5 +45,5 @@ public:
 
 private:
     struct Impl;
-    Impl* d;
+    std::unique_ptr<Impl> d;
 };

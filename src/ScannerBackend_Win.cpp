@@ -33,8 +33,8 @@ struct ScannerBackend::Impl {
     bool scanning = false;
 };
 
-ScannerBackend::ScannerBackend() : d(new Impl) {}
-ScannerBackend::~ScannerBackend() { delete d; }
+ScannerBackend::ScannerBackend() : d(std::make_unique<Impl>()) {}
+ScannerBackend::~ScannerBackend() = default;
 
 void ScannerBackend::setDeviceListCallback(std::function<void(const std::vector<ScannerInfo>&)> cb) { d->deviceListCb = std::move(cb); }
 void ScannerBackend::setPageCallback(std::function<void(const QImage&)> cb) { d->pageCb = std::move(cb); }

@@ -41,6 +41,7 @@ jobs:
       - name: Run verification test
         run: |
           QT_QPA_PLATFORM=offscreen ./build/TiScannUtility --pdftest
+          ctest --test-dir build --output-on-failure
 
       - name: Install to AppDir
         run: |
@@ -73,8 +74,15 @@ jobs:
           path: TiScannUtility-x86_64.AppImage
 
   build-macos:
-    name: Build macOS Application Bundle
-    runs-on: macos-14
+    name: Build macOS Application Bundle (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-14
+            arch: arm64
+          - os: macos-13
+            arch: x86_64
 
     steps:
       - name: Checkout repository
@@ -94,16 +102,18 @@ jobs:
       - name: Run verification test
         run: |
           ./build/TiScannUtility.app/Contents/MacOS/TiScannUtility --pdftest
+          ctest --test-dir build --output-on-failure
 
       - name: Package macOS App Bundle
         run: |
-          ditto -c -k --sequesterRsrc --keepParent build/TiScannUtility.app TiScannUtility-macOS.zip
+          $(brew --prefix qt)/bin/macdeployqt build/TiScannUtility.app || true
+          ditto -c -k --sequesterRsrc --keepParent build/TiScannUtility.app TiScannUtility-macOS-${{ matrix.arch }}.zip
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TiScannUtility-macOS
-          path: TiScannUtility-macOS.zip
+          name: TiScannUtility-macOS-${{ matrix.arch }}
+          path: TiScannUtility-macOS-${{ matrix.arch }}.zip
 
   publish-release:
     name: Publish GitHub Release
@@ -115,24 +125,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download Linux artifact
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          name: TiScannUtility-Linux
-          path: dist
-
-      - name: Download macOS artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: TiScannUtility-macOS
           path: dist
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/TiScannUtility-x86_64.AppImage
-            dist/TiScannUtility-macOS.zip
+            dist/**/*
           generate_release_notes: true
           draft: false
           prerelease: false
