@@ -78,7 +78,7 @@ jobs:
           path: TiScannUtility-x86_64.AppImage
 
   build-macos:
-    name: Build macOS Application Bundle (Universal)
+    name: Build macOS Application Bundle (Apple Silicon)
     runs-on: macos-14
 
     steps:
@@ -92,7 +92,7 @@ jobs:
 
       - name: Configure and build
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build -j$(sysctl -n hw.ncpu)
 
       - name: Run verification test
@@ -103,13 +103,13 @@ jobs:
       - name: Package macOS App Bundle
         run: |
           macdeployqt build/TiScannUtility.app || true
-          ditto -c -k --sequesterRsrc --keepParent build/TiScannUtility.app TiScannUtility-macOS-Universal.zip
+          ditto -c -k --sequesterRsrc --keepParent build/TiScannUtility.app TiScannUtility-macOS-arm64.zip
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TiScannUtility-macOS-Universal
-          path: TiScannUtility-macOS-Universal.zip
+          name: TiScannUtility-macOS-arm64
+          path: TiScannUtility-macOS-arm64.zip
 
   publish-release:
     name: Publish GitHub Release
