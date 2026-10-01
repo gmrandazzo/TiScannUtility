@@ -92,25 +92,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Homebrew dependencies
-        run: |
-          brew install qt cmake
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.5.3'
 
       - name: Configure and build
         run: |
-          cmake -B build \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix qt)" \
-            -DCMAKE_BUILD_TYPE=Release
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build -j$(sysctl -n hw.ncpu)
 
       - name: Run verification test
         run: |
-          ./build/TiScannUtility.app/Contents/MacOS/TiScannUtility --pdftest
+          QT_QPA_PLATFORM=offscreen ./build/TiScannUtility.app/Contents/MacOS/TiScannUtility --pdftest
           ctest --test-dir build --output-on-failure
 
       - name: Package macOS App Bundle
         run: |
-          $(brew --prefix qt)/bin/macdeployqt build/TiScannUtility.app || true
+          macdeployqt build/TiScannUtility.app || true
           ditto -c -k --sequesterRsrc --keepParent build/TiScannUtility.app TiScannUtility-macOS-${{ matrix.arch }}.zip
 
       - name: Upload macOS artifact
