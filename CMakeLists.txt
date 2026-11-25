@@ -19,9 +19,9 @@
 cmake_minimum_required(VERSION 3.21)
 
 if(APPLE)
-    project(TiScannUtility VERSION 1.0.0 LANGUAGES CXX OBJCXX)
+    project(TiScannUtility VERSION 1.1.0 LANGUAGES CXX OBJCXX)
 else()
-    project(TiScannUtility VERSION 1.0.0 LANGUAGES CXX)
+    project(TiScannUtility VERSION 1.1.0 LANGUAGES CXX)
 endif()
 
 set(CMAKE_CXX_STANDARD 17)
@@ -82,6 +82,7 @@ else()
 endif()
 
 target_include_directories(TiScannUtility PRIVATE src)
+target_compile_definitions(TiScannUtility PRIVATE APP_VERSION="${PROJECT_VERSION}")
 
 target_link_libraries(TiScannUtility PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
@@ -97,8 +98,8 @@ if(APPLE)
 
     set_target_properties(TiScannUtility PROPERTIES
         MACOSX_BUNDLE_BUNDLE_NAME "TiScannUtility"
-        MACOSX_BUNDLE_BUNDLE_VERSION "1.0.0"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.0"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Info.plist.in"
         MACOSX_BUNDLE_ICON_FILE "icon.icns"
     )
