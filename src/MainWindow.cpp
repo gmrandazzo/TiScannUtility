@@ -117,6 +117,12 @@ MainWindow::MainWindow()
         statusBar()->showMessage("Looking for scanners...");
     });
     connect(ui->deviceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { updateDuplexAvailability(); });
+    connect(ui->emailSizeCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if (checked) ui->compressCheck->setChecked(true);
+    });
+    connect(ui->compressCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if (!checked && ui->emailSizeCheck->isChecked()) ui->emailSizeCheck->setChecked(false);
+    });
 
     auto* delShortcut = new QShortcut(QKeySequence::Delete, this);
     connect(delShortcut, &QShortcut::activated, this, &MainWindow::onDeleteSelected);
@@ -386,28 +392,69 @@ void MainWindow::onSave() {
     isProcessing = true;
     ui->centralwidget->setEnabled(false);
     QApplication::setOverrideCursor(Qt::WaitCursor);
-    PdfAssembler assembler;
-    std::string err;
-    bool ok = assembler.begin(path.toStdString(), &err);
-    for (int i = 0; ok && i < ui->list->count(); ++i) {
-        PageItem* page = pageOf(ui->list->item(i));
-        if (!page) continue;
-        if (page->isPdf) {
-            ok = assembler.appendPdfPage(page->pdfPath.toStdString(), page->pdfPage, page->rotation);
-        } else {
-            QImage img = page->fullImage();
-            ok = assembler.appendImage(img, page->rotation);
+
+    auto assemblePdf = [&](const PdfSaveOptions& opts, std::string& outErr) -> bool {
+        PdfAssembler assembler;
+        assembler.setSaveOptions(opts);
+        bool ok = assembler.begin(path.toStdString(), &outErr);
+        for (int i = 0; ok && i < ui->list->count(); ++i) {
+            PageItem* page = pageOf(ui->list->item(i));
+            if (!page) continue;
+            if (page->isPdf) {
+                ok = assembler.appendPdfPage(page->pdfPath.toStdString(), page->pdfPage, page->rotation);
+            } else {
+                QImage img = page->fullImage();
+                ok = assembler.appendImage(img, page->rotation);
+            }
+            if (i % 5 == 0) QCoreApplication::processEvents();
         }
-        if (i % 5 == 0) QCoreApplication::processEvents();
+        std::string endErr;
+        bool endOk = assembler.end(&endErr);
+        if (!ok) {
+            if (outErr.empty()) outErr = "Failed to assemble all pages into the PDF.";
+            return false;
+        }
+        if (!endOk) {
+            outErr = endErr.empty() ? "Failed to finalize the PDF file." : endErr;
+            return false;
+        }
+        return true;
+    };
+
+    std::string err;
+    bool ok = false;
+    bool emailLimitExceeded = false;
+    constexpr qint64 kEmailMaxBytes = 5LL * 1000 * 1000;
+
+    if (ui->emailSizeCheck->isChecked()) {
+        const PdfSaveOptions presets[] = {
+            {true, 75, 150},
+            {true, 60, 120},
+            {true, 45, 100},
+            {true, 35, 85},
+            {true, 25, 72},
+            {true, 20, 56},
+            {true, 15, 42},
+            {true, 10, 30},
+        };
+        for (const PdfSaveOptions& preset : presets) {
+            statusBar()->showMessage(
+                QString("Optimizing PDF for email (< 5 MB) at %1 DPI, quality %2%...")
+                    .arg(preset.maxDpi).arg(preset.jpegQuality));
+            QCoreApplication::processEvents();
+            ok = assemblePdf(preset, err);
+            if (!ok) break;
+            if (QFileInfo(path).size() <= kEmailMaxBytes) break;
+        }
+        if (ok && QFileInfo(path).size() > kEmailMaxBytes) {
+            emailLimitExceeded = true;
+        }
+    } else if (ui->compressCheck->isChecked()) {
+        ok = assemblePdf({true, 75, 150}, err);
+    } else {
+        ok = assemblePdf({false, 75, 0}, err);
     }
-    std::string endErr;
-    bool endOk = assembler.end(&endErr);
-    if (!ok) {
-        if (err.empty()) err = "Failed to assemble all pages into the PDF.";
-    } else if (!endOk) {
-        ok = false;
-        err = endErr.empty() ? "Failed to finalize the PDF file." : endErr;
-    }
+
     QApplication::restoreOverrideCursor();
     ui->centralwidget->setEnabled(true);
     isProcessing = false;
@@ -416,7 +463,15 @@ void MainWindow::onSave() {
         QMessageBox::critical(this, "Save", QString("Could not save PDF:\n%1").arg(QString::fromStdString(err)));
         return;
     }
-    statusBar()->showMessage(QString("Saved %1 page(s) to %2").arg(ui->list->count()).arg(path));
+    const double sizeMb = QFileInfo(path).size() / (1000.0 * 1000.0);
+    if (emailLimitExceeded) {
+        QMessageBox::warning(this, "Email Size Limit",
+            QString("The PDF was saved at maximum compression (%1 MB), but still exceeds 5 MB due to the number of pages.")
+                .arg(sizeMb, 0, 'f', 2));
+    }
+    statusBar()->showMessage(
+        QString("Saved %1 page(s) to %2 (%3 MB)")
+            .arg(ui->list->count()).arg(path).arg(sizeMb, 0, 'f', 2));
     QDesktopServices::openUrl(QUrl::fromLocalFile(path));
 }
 

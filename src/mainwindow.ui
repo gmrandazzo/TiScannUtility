@@ -76,8 +76,13 @@
       <item>
        <widget class="QComboBox" name="dpiCombo">
         <property name="currentIndex">
-         <number>1</number>
+         <number>0</number>
         </property>
+        <item>
+         <property name="text">
+          <string>100</string>
+         </property>
+        </item>
         <item>
          <property name="text">
           <string>150</string>
@@ -305,6 +310,26 @@
          </size>
         </property>
        </spacer>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="compressCheck">
+        <property name="text">
+         <string>Compress PDF</string>
+        </property>
+        <property name="toolTip">
+         <string>Compress pages to reduce output PDF file size</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="emailSizeCheck">
+        <property name="text">
+         <string>Email (&lt; 5 MB)</string>
+        </property>
+        <property name="toolTip">
+         <string>Automatically adjust compression and resolution to keep the PDF under 5 MB</string>
+        </property>
+       </widget>
       </item>
       <item>
        <widget class="QPushButton" name="saveBtn">

@@ -569,7 +569,7 @@ TEST_CASE(TestImage_MonochromeThresholdPolarity) {
 
 TEST_CASE(TestScannerBackend_OptionsDefaults) {
     ScanOptions opt;
-    ASSERT_EQ(opt.dpi, 300);
+    ASSERT_EQ(opt.dpi, 100);
     ASSERT_TRUE(opt.colorMode == ColorMode::Color);
     ASSERT_FALSE(opt.duplex);
     ASSERT_TRUE(opt.source == ScanSource::Automatic);
@@ -655,6 +655,63 @@ TEST_CASE(TestPdfAssembler_CorruptedPdfHandling) {
     // renderPdfPage should return null image gracefully
     QImage rendered = PdfAssembler::renderPdfPage(badPdf.toStdString(), 0, 200);
     ASSERT_TRUE(rendered.isNull());
+}
+
+TEST_CASE(TestPdfAssembler_CompressionReducesSize) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    std::string rawPath = tmpDir.filePath("uncompressed.pdf").toStdString();
+    std::string compPath = tmpDir.filePath("compressed.pdf").toStdString();
+    std::string recompPath = tmpDir.filePath("recompressed_from_pdf.pdf").toStdString();
+
+    // Create a 300 DPI image with non-periodic pixel data (like real scanner sensor noise + text)
+    QImage img(1600, 2200, QImage::Format_RGB32);
+    int dpm = int(300 / 0.0254 + 0.5);
+    img.setDotsPerMeterX(dpm);
+    img.setDotsPerMeterY(dpm);
+    uint32_t rng = 123456789u;
+    for (int y = 0; y < img.height(); ++y) {
+        QRgb* row = reinterpret_cast<QRgb*>(img.scanLine(y));
+        for (int x = 0; x < img.width(); ++x) {
+            rng = rng * 1664525u + 1013904223u;
+            int r = 200 + int((rng >> 24) % 56);
+            int g = 200 + int(((rng >> 16) & 0xFF) % 56);
+            int b = 200 + int(((rng >> 8) & 0xFF) % 56);
+            row[x] = qRgb(r, g, b);
+        }
+    }
+
+    std::string err;
+    {
+        PdfAssembler rawAsm;
+        ASSERT_TRUE(rawAsm.begin(rawPath, &err));
+        ASSERT_TRUE(rawAsm.appendImage(img, 0));
+        ASSERT_TRUE(rawAsm.end(&err));
+    }
+    {
+        PdfAssembler compAsm;
+        compAsm.setSaveOptions({true, 60, 150});
+        ASSERT_TRUE(compAsm.begin(compPath, &err));
+        ASSERT_TRUE(compAsm.appendImage(img, 0));
+        ASSERT_TRUE(compAsm.end(&err));
+    }
+    {
+        PdfAssembler recompAsm;
+        recompAsm.setSaveOptions({true, 50, 100});
+        ASSERT_TRUE(recompAsm.begin(recompPath, &err));
+        ASSERT_TRUE(recompAsm.appendPdfPage(rawPath, 0, 0));
+        ASSERT_TRUE(recompAsm.end(&err));
+    }
+
+    qint64 rawSize = QFileInfo(QString::fromStdString(rawPath)).size();
+    qint64 compSize = QFileInfo(QString::fromStdString(compPath)).size();
+    qint64 recompSize = QFileInfo(QString::fromStdString(recompPath)).size();
+
+    ASSERT_EQ(PdfAssembler::pdfPageCount(rawPath), 1);
+    ASSERT_EQ(PdfAssembler::pdfPageCount(compPath), 1);
+    ASSERT_EQ(PdfAssembler::pdfPageCount(recompPath), 1);
+    ASSERT_LT(compSize, rawSize);
+    ASSERT_LT(recompSize, rawSize);
 }
 
 // ===========================================================================

@@ -31,7 +31,7 @@ enum class ColorMode { Color, Grayscale, BlackWhite };
 enum class ScanSource { Automatic, Flatbed, Feeder };
 
 struct ScanOptions {
-    int dpi = 300;
+    int dpi = 100;
     ColorMode colorMode = ColorMode::Color;
     bool duplex = false;
     ScanSource source = ScanSource::Automatic;
