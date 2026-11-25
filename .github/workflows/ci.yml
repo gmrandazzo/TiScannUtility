@@ -53,21 +53,20 @@ jobs:
 
   test-macos:
     name: Tests (macOS)
-    runs-on: macos-14
+    runs-on: macos-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Homebrew dependencies
-        run: |
-          brew install qt cmake
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.5.3'
 
       - name: Configure CMake
         run: |
-          cmake -B build \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix qt)" \
-            -DCMAKE_BUILD_TYPE=Release
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build TiScannUtility and unit_tests
         run: |
@@ -75,7 +74,7 @@ jobs:
 
       - name: Run PDF Pipeline Test
         run: |
-          ./build/TiScannUtility.app/Contents/MacOS/TiScannUtility --pdftest
+          QT_QPA_PLATFORM=offscreen ./build/TiScannUtility.app/Contents/MacOS/TiScannUtility --pdftest
 
       - name: Run Unit & Corner-Case Tests (CTest)
         run: |
