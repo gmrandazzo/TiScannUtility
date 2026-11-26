@@ -714,6 +714,32 @@ TEST_CASE(TestPdfAssembler_CompressionReducesSize) {
     ASSERT_LT(recompSize, rawSize);
 }
 
+TEST_CASE(TestPdfAssembler_FullPageFillAtHighDpi) {
+    // Regression test: verify QPdfWriter draws at full page size at 300 DPI
+    // rather than shrinking into a 72/300 (24%) corner box.
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    std::string path = tmpDir.filePath("fullfill.pdf").toStdString();
+
+    QImage img = createPatternImage(600, 900, 300, QColor(30, 80, 180));
+    PdfAssembler asmblr;
+    std::string err;
+    ASSERT_TRUE(asmblr.begin(path, &err));
+    ASSERT_TRUE(asmblr.appendImage(img, 0));
+    ASSERT_TRUE(asmblr.appendImage(img, 90));
+    ASSERT_TRUE(asmblr.end(&err));
+
+    ASSERT_EQ(PdfAssembler::pdfPageCount(path), 2);
+    for (int p = 0; p < 2; ++p) {
+        QImage rendered = PdfAssembler::renderPdfPage(path, p, 300);
+        ASSERT_FALSE(rendered.isNull());
+        // Bottom-right quadrant must be blue, not empty white margin
+        QRgb px = rendered.pixel((rendered.width() * 3) / 4, (rendered.height() * 3) / 4);
+        ASSERT_LT(qRed(px), 100);
+        ASSERT_GT(qBlue(px), 120);
+    }
+}
+
 // ===========================================================================
 // Main Entry Point
 // ===========================================================================

@@ -475,22 +475,26 @@ bool PdfAssembler::appendImage(const QImage& image, int rotationDeg) {
     writer.setPageSize(QPageSize(QSizeF(ptW, ptH), QPageSize::Point));
     writer.setPageMargins(QMarginsF(0, 0, 0, 0));
 
-    QPainter painter(&writer);
-    qreal origPtW = prepared.width() * 72.0 / dpi;
-    qreal origPtH = prepared.height() * 72.0 / dpi;
+    // QPainter coordinates on QPdfWriter are in device pixels at `dpi`, not points.
+    const qreal devW = writer.width();
+    const qreal devH = writer.height();
+    const bool swap = (rotation == 90 || rotation == 270);
+    const qreal drawW = swap ? devH : devW;
+    const qreal drawH = swap ? devW : devH;
 
+    QPainter painter(&writer);
     if (rotation == 90) {
-        painter.translate(ptW, 0);
+        painter.translate(devW, 0);
         painter.rotate(90);
     } else if (rotation == 180) {
-        painter.translate(ptW, ptH);
+        painter.translate(devW, devH);
         painter.rotate(180);
     } else if (rotation == 270) {
-        painter.translate(0, ptH);
+        painter.translate(0, devH);
         painter.rotate(270);
     }
 
-    painter.drawImage(QRectF(0, 0, origPtW, origPtH), prepared);
+    painter.drawImage(QRectF(0, 0, drawW, drawH), prepared);
     painter.end();
 
     d->tempFiles.push_back(tmpPath);
@@ -637,11 +641,16 @@ bool PdfAssembler::end(std::string* error) {
                     qreal ptH = h * 72.0 / 300.0;
                     pw.setPageSize(QPageSize(QSizeF(ptW, ptH), QPageSize::Point));
                     pw.setPageMargins(QMarginsF(0, 0, 0, 0));
+                    const qreal devW = pw.width();
+                    const qreal devH = pw.height();
+                    const bool swap = (rot == 90 || rot == 270);
+                    const qreal drawW = swap ? devH : devW;
+                    const qreal drawH = swap ? devW : devH;
                     QPainter p(&pw);
-                    if (rot == 90) { p.translate(ptW, 0); p.rotate(90); }
-                    else if (rot == 180) { p.translate(ptW, ptH); p.rotate(180); }
-                    else if (rot == 270) { p.translate(0, ptH); p.rotate(270); }
-                    p.drawImage(QRectF(0, 0, rendered.width() * 72.0 / 300.0, rendered.height() * 72.0 / 300.0), rendered);
+                    if (rot == 90) { p.translate(devW, 0); p.rotate(90); }
+                    else if (rot == 180) { p.translate(devW, devH); p.rotate(180); }
+                    else if (rot == 270) { p.translate(0, devH); p.rotate(270); }
+                    p.drawImage(QRectF(0, 0, drawW, drawH), rendered);
                     p.end();
                     d->tempFiles.push_back(imgPdf);
                     pageFiles << imgPdf;
@@ -680,19 +689,24 @@ bool PdfAssembler::end(std::string* error) {
         int h = (rot == 90 || rot == 270) ? pageImg.width() : pageImg.height();
         qreal ptW = w * 72.0 / 300.0;
         qreal ptH = h * 72.0 / 300.0;
+        writer.setPageSize(QPageSize(QSizeF(ptW, ptH), QPageSize::Point));
+        writer.setPageMargins(QMarginsF(0, 0, 0, 0));
         if (!first) {
             writer.newPage();
         } else {
             painter.begin(&writer);
             first = false;
         }
-        writer.setPageSize(QPageSize(QSizeF(ptW, ptH), QPageSize::Point));
-        writer.setPageMargins(QMarginsF(0, 0, 0, 0));
+        const qreal devW = writer.width();
+        const qreal devH = writer.height();
+        const bool swap = (rot == 90 || rot == 270);
+        const qreal drawW = swap ? devH : devW;
+        const qreal drawH = swap ? devW : devH;
         painter.save();
-        if (rot == 90) { painter.translate(ptW, 0); painter.rotate(90); }
-        else if (rot == 180) { painter.translate(ptW, ptH); painter.rotate(180); }
-        else if (rot == 270) { painter.translate(0, ptH); painter.rotate(270); }
-        painter.drawImage(QRectF(0, 0, pageImg.width() * 72.0 / 300.0, pageImg.height() * 72.0 / 300.0), pageImg);
+        if (rot == 90) { painter.translate(devW, 0); painter.rotate(90); }
+        else if (rot == 180) { painter.translate(devW, devH); painter.rotate(180); }
+        else if (rot == 270) { painter.translate(0, devH); painter.rotate(270); }
+        painter.drawImage(QRectF(0, 0, drawW, drawH), pageImg);
         painter.restore();
     }
     if (!first) painter.end();

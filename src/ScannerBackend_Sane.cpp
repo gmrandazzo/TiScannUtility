@@ -144,10 +144,10 @@ typedef enum {
 typedef struct {
     SANE_Frame format;
     SANE_Bool last_frame;
+    SANE_Int bytes_per_line;
+    SANE_Int pixels_per_line;
     SANE_Int lines;
     SANE_Int depth;
-    SANE_Int pixels_per_line;
-    SANE_Int bytes_per_line;
 } SANE_Parameters;
 
 typedef struct {
