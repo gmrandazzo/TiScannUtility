@@ -115,6 +115,7 @@ MainWindow::MainWindow()
     connect(ui->refreshBtn, &QToolButton::clicked, this, [this] {
         rebuildDeviceCombo();
         statusBar()->showMessage("Looking for scanners...");
+        backend.startBrowsing();
     });
     connect(ui->deviceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { updateDuplexAvailability(); });
     connect(ui->emailSizeCheck, &QCheckBox::toggled, this, [this](bool checked) {
@@ -502,13 +503,20 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 }
 
 void MainWindow::onAbout() {
+#if defined(Q_OS_MACOS)
+    const QString backendName = QStringLiteral("macOS ImageCaptureCore");
+#elif defined(Q_OS_WIN)
+    const QString backendName = QStringLiteral("Windows WIA");
+#else
+    const QString backendName = QStringLiteral("Linux SANE");
+#endif
     QMessageBox::about(this, "About TiScannUtility",
         QString("<h3>TiScannUtility %1</h3>"
                 "<p>Scan, rearrange, rotate and merge pages into a final PDF.</p>"
                 "<p>Author: <b>Giuseppe Marco Randazzo</b> &lt;gmrandazzo@gmail.com&gt;</p>"
                 "<p>Licensed under the GNU AGPL v3. Qt is linked dynamically and remains under the LGPL.</p>"
-                "<p>Built with Qt %2 and macOS ImageCaptureCore.</p>")
-            .arg(QApplication::applicationVersion(), QLatin1String(qVersion())));
+                "<p>Built with Qt %2 and %3.</p>")
+            .arg(QApplication::applicationVersion(), QLatin1String(qVersion()), backendName));
 }
 
 void MainWindow::onClose() {

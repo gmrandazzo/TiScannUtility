@@ -61,7 +61,20 @@ jobs:
             -e build/TiScannUtility \
             -d cmake/TiScannUtility.desktop \
             -i cmake/TiScannUtility.svg \
-            --plugin qt \
+            --exclude-library="libglib-2.0.so*" \
+            --exclude-library="libdbus-1.so*" \
+            --exclude-library="libsystemd.so*" \
+            --plugin qt
+
+          # Guarantee host-ABI system libs are never bundled so host SANE
+          # backends (e.g. libsane-escl -> libgobject/libgio, libsane-airscan -> avahi/dbus)
+          # resolve against the host's matching libraries at runtime.
+          rm -f AppDir/usr/lib/libglib-2.0.so* \
+                AppDir/usr/lib/libdbus-1.so* \
+                AppDir/usr/lib/libsystemd.so*
+
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir AppDir \
             --output appimage
 
           # Ensure correct name without failing if it's already correct

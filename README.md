@@ -47,6 +47,13 @@ $(brew --prefix qt)/bin/macdeployqt build/TiScannUtility.app
 ### Linux
 Requires: CMake, GCC/Clang, Qt (Qt 6 or Qt 5 Widgets), SANE (`libsane1`), and Poppler tools (`poppler-utils` or `libpoppler-qt6-dev` / `libqpdf-dev`).
 
+For automatic discovery of network scanners (AirScan / eSCL), install `sane-airscan` and ensure `avahi-daemon` is running:
+
+```bash
+sudo apt install libsane1 sane-airscan avahi-daemon
+sudo systemctl enable --now avahi-daemon.socket avahi-daemon.service
+```
+
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
@@ -89,5 +96,7 @@ TiScannUtility/
 
 ## Troubleshooting
 
-- **Scanner never appears**: Check that the printer is awake and on the same network. On macOS, ensure System Settings → Privacy & Security → Local Network allows TiScannUtility.
+- **Scanner never appears**: Check that the printer is awake and on the same network.
+  - **macOS**: Ensure System Settings → Privacy & Security → Local Network allows TiScannUtility.
+  - **Linux**: Ensure `libsane1` and `sane-airscan` are installed and that `avahi-daemon` is running (`sudo systemctl enable --now avahi-daemon.socket avahi-daemon.service`). On distributions where `avahi-daemon` is kept disabled, you can either rely on the built-in eSCL mDNS fallback (`libsane-escl`) or add the scanner's IP manually under `[devices]` in `/etc/sane.d/airscan.conf` (e.g. `"My Scanner" = http://<ip>:80/eSCL`).
 - **"no pages received"**: The feeder was empty (or flatbed glass empty) — load paper and scan again.
