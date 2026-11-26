@@ -24,13 +24,20 @@
 #include <string>
 #include <memory>
 
+struct PdfSaveOptions {
+    bool compress = false;
+    int jpegQuality = 75; // 1..100 when compress is true
+    int maxDpi = 0;       // 0 = keep original DPI; >0 = downsample images exceeding maxDpi
+};
+
 // Builds a PDF document from scanned images and/or pages of existing PDF files.
-// Usage: begin() -> appendImage()/appendPdfPage() in page order -> end().
+// Usage: setSaveOptions() -> begin() -> appendImage()/appendPdfPage() in page order -> end().
 class PdfAssembler {
 public:
     PdfAssembler();
     ~PdfAssembler();
 
+    void setSaveOptions(const PdfSaveOptions& options);
     bool begin(const std::string& path, std::string* error);
     // rotationDeg: 0, 90, 180 or 270 (clockwise).
     bool appendImage(const QImage& image, int rotationDeg);

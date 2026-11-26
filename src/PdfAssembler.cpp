@@ -19,18 +19,11 @@
  */
 #include "PdfAssembler.h"
 
-#if defined(__APPLE__)
+#include <QBuffer>
+#include <QByteArray>
 
-#include "ImageConversion.h"
-
-#include <CoreGraphics/CGPDFDocument.h>
-#include <CoreGraphics/CGContext.h>
-#include <CoreGraphics/CGPDFContext.h>
-#include <CoreGraphics/CGBitmapContext.h>
-#include <QFile>
-
+#include <algorithm>
 #include <cmath>
-#include <map>
 
 namespace {
 
@@ -45,6 +38,75 @@ int dpiOf(const QImage& img) {
     if (dpm <= 0) return 150;
     int dpi = int(std::lround(dpm * 0.0254));
     return dpi > 0 ? dpi : 150;
+}
+
+QImage prepareImageForSave(const QImage& source, const PdfSaveOptions& opts) {
+    if (!opts.compress || source.isNull()) return source;
+    QImage img = source;
+    int dpi = dpiOf(img);
+    if (opts.maxDpi > 0 && dpi > opts.maxDpi) {
+        double scale = double(opts.maxDpi) / double(dpi);
+        int newW = std::max(1, int(std::lround(img.width() * scale)));
+        int newH = std::max(1, int(std::lround(img.height() * scale)));
+        img = img.scaled(newW, newH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        int dpm = int(std::lround(opts.maxDpi / 0.0254));
+        img.setDotsPerMeterX(dpm);
+        img.setDotsPerMeterY(dpm);
+    }
+    return img;
+}
+
+} // namespace
+
+#if defined(__APPLE__)
+
+#include "ImageConversion.h"
+
+#include <CoreGraphics/CGPDFDocument.h>
+#include <CoreGraphics/CGContext.h>
+#include <CoreGraphics/CGPDFContext.h>
+#include <CoreGraphics/CGBitmapContext.h>
+#include <QFile>
+
+#include <map>
+
+namespace {
+
+void releaseJpegData(void* info, const void* data, size_t size) {
+    (void)data;
+    (void)size;
+    delete static_cast<QByteArray*>(info);
+}
+
+CGImageRef cgImageFromQImageCompressed(const QImage& source, int jpegQuality) {
+    if (source.isNull()) return nullptr;
+    if (source.format() == QImage::Format_Mono) {
+        return cgImageFromQImage(source);
+    }
+
+    QImage enc = source.isGrayscale()
+        ? source.convertToFormat(QImage::Format_Grayscale8)
+        : source.convertToFormat(QImage::Format_RGB888);
+
+    auto* jpegBytes = new QByteArray();
+    QBuffer buf(jpegBytes);
+    buf.open(QIODevice::WriteOnly);
+    int quality = std::clamp(jpegQuality, 1, 100);
+    if (!enc.save(&buf, "JPEG", quality) || jpegBytes->isEmpty()) {
+        delete jpegBytes;
+        return cgImageFromQImage(source);
+    }
+
+    CGDataProviderRef provider = CGDataProviderCreateWithData(
+        jpegBytes, jpegBytes->constData(), size_t(jpegBytes->size()), releaseJpegData);
+    if (!provider) {
+        delete jpegBytes;
+        return cgImageFromQImage(source);
+    }
+    CGImageRef cg = CGImageCreateWithJPEGDataProvider(provider, nullptr, true, kCGRenderingIntentDefault);
+    CGDataProviderRelease(provider);
+    if (!cg) return cgImageFromQImage(source);
+    return cg;
 }
 
 CFURLRef makeUrl(const std::string& path) {
@@ -74,6 +136,7 @@ void applyRotation(CGContextRef ctx, int rotation, double w, double h) {
 } // namespace
 
 struct PdfAssembler::Impl {
+    PdfSaveOptions options;
     std::string targetPath;
     std::string tempPath;
     CGContextRef ctx = nullptr;
@@ -115,6 +178,10 @@ PdfAssembler::~PdfAssembler() {
     }
 }
 
+void PdfAssembler::setSaveOptions(const PdfSaveOptions& options) {
+    d->options = options;
+}
+
 bool PdfAssembler::begin(const std::string& path, std::string* error) {
     if (path.empty()) {
         if (error) *error = "invalid output path";
@@ -139,17 +206,20 @@ bool PdfAssembler::begin(const std::string& path, std::string* error) {
 
 bool PdfAssembler::appendImage(const QImage& image, int rotationDeg) {
     if (!d->ctx || image.isNull()) return false;
+    QImage prepared = prepareImageForSave(image, d->options);
     int rotation = normalizeRotation(rotationDeg);
-    int dpi = dpiOf(image);
+    int dpi = dpiOf(prepared);
 
-    double wPt = image.width() * 72.0 / dpi;
-    double hPt = image.height() * 72.0 / dpi;
+    double wPt = prepared.width() * 72.0 / dpi;
+    double hPt = prepared.height() * 72.0 / dpi;
     bool swap = (rotation == 90 || rotation == 270);
     CGRect pageBox = CGRectMake(0, 0, CGFloat(swap ? hPt : wPt), CGFloat(swap ? wPt : hPt));
     if (!d->beginPage(pageBox)) return false;
 
     applyRotation(d->ctx, rotation, wPt, hPt);
-    CGImageRef cg = cgImageFromQImage(image);
+    CGImageRef cg = d->options.compress
+        ? cgImageFromQImageCompressed(prepared, d->options.jpegQuality)
+        : cgImageFromQImage(prepared);
     if (!cg) {
         CGPDFContextEndPage(d->ctx);
         return false;
@@ -170,6 +240,18 @@ bool PdfAssembler::appendPdfPage(const std::string& pdfPath, int pageIndex, int 
     CGRect srcBox = CGPDFPageGetBoxRect(page, kCGPDFMediaBox);
     if (CGRectIsEmpty(srcBox)) srcBox = CGPDFPageGetBoxRect(page, kCGPDFCropBox);
     if (CGRectIsEmpty(srcBox)) return false;
+
+    if (d->options.compress) {
+        int targetDpi = d->options.maxDpi > 0 ? d->options.maxDpi : 150;
+        int maxDim = std::max(1, int(std::lround(std::max(srcBox.size.width, srcBox.size.height) * targetDpi / 72.0)));
+        QImage rendered = renderPdfPage(pdfPath, pageIndex, maxDim);
+        if (!rendered.isNull()) {
+            int dpm = int(std::lround(targetDpi / 0.0254));
+            rendered.setDotsPerMeterX(dpm);
+            rendered.setDotsPerMeterY(dpm);
+            return appendImage(rendered, rotationDeg);
+        }
+    }
 
     int intrinsicRotation = CGPDFPageGetRotationAngle(page);
     int totalRotation = normalizeRotation(rotationDeg + intrinsicRotation);
@@ -316,19 +398,6 @@ QImage PdfAssembler::renderPdfPage(const std::string& pdfPath, int pageIndex, in
 
 namespace {
 
-int normalizeRotation(int deg) {
-    int r = deg % 360;
-    if (r < 0) r += 360;
-    return r;
-}
-
-int dpiOf(const QImage& img) {
-    int dpm = img.dotsPerMeterX();
-    if (dpm <= 0) return 150;
-    int dpi = int(std::lround(dpm * 0.0254));
-    return dpi > 0 ? dpi : 150;
-}
-
 struct PageSource {
     bool isPdf = false;
     QString path;
@@ -339,6 +408,7 @@ struct PageSource {
 } // namespace
 
 struct PdfAssembler::Impl {
+    PdfSaveOptions options;
     std::string targetPath;
     std::vector<PageSource> pages;
     std::vector<QString> tempFiles;
@@ -361,6 +431,10 @@ PdfAssembler::~PdfAssembler() {
     d->cleanup();
 }
 
+void PdfAssembler::setSaveOptions(const PdfSaveOptions& options) {
+    d->options = options;
+}
+
 bool PdfAssembler::begin(const std::string& path, std::string* error) {
     d->cleanup();
     if (path.empty()) {
@@ -381,11 +455,16 @@ bool PdfAssembler::begin(const std::string& path, std::string* error) {
 bool PdfAssembler::appendImage(const QImage& image, int rotationDeg) {
     if (d->targetPath.empty() || image.isNull()) return false;
 
-    int rotation = normalizeRotation(rotationDeg);
-    int dpi = dpiOf(image);
+    QImage prepared = prepareImageForSave(image, d->options);
+    if (d->options.compress && prepared.format() != QImage::Format_Mono && !prepared.isGrayscale()) {
+        prepared = prepared.convertToFormat(QImage::Format_RGB888);
+    }
 
-    int w = (rotation == 90 || rotation == 270) ? image.height() : image.width();
-    int h = (rotation == 90 || rotation == 270) ? image.width() : image.height();
+    int rotation = normalizeRotation(rotationDeg);
+    int dpi = dpiOf(prepared);
+
+    int w = (rotation == 90 || rotation == 270) ? prepared.height() : prepared.width();
+    int h = (rotation == 90 || rotation == 270) ? prepared.width() : prepared.height();
     qreal ptW = w * 72.0 / dpi;
     qreal ptH = h * 72.0 / dpi;
 
@@ -397,8 +476,8 @@ bool PdfAssembler::appendImage(const QImage& image, int rotationDeg) {
     writer.setPageMargins(QMarginsF(0, 0, 0, 0));
 
     QPainter painter(&writer);
-    qreal origPtW = image.width() * 72.0 / dpi;
-    qreal origPtH = image.height() * 72.0 / dpi;
+    qreal origPtW = prepared.width() * 72.0 / dpi;
+    qreal origPtH = prepared.height() * 72.0 / dpi;
 
     if (rotation == 90) {
         painter.translate(ptW, 0);
@@ -411,7 +490,7 @@ bool PdfAssembler::appendImage(const QImage& image, int rotationDeg) {
         painter.rotate(270);
     }
 
-    painter.drawImage(QRectF(0, 0, origPtW, origPtH), image);
+    painter.drawImage(QRectF(0, 0, origPtW, origPtH), prepared);
     painter.end();
 
     d->tempFiles.push_back(tmpPath);
@@ -425,6 +504,17 @@ bool PdfAssembler::appendPdfPage(const std::string& pdfPath, int pageIndex, int 
     if (!QFile::exists(QString::fromStdString(pdfPath))) return false;
     int total = pdfPageCount(pdfPath);
     if (pageIndex >= total) return false;
+    if (d->options.compress) {
+        int targetDpi = d->options.maxDpi > 0 ? d->options.maxDpi : 150;
+        int maxDim = std::max(1, int(std::lround(11.7 * targetDpi)));
+        QImage rendered = renderPdfPage(pdfPath, pageIndex, maxDim);
+        if (!rendered.isNull()) {
+            int dpm = int(std::lround(targetDpi / 0.0254));
+            rendered.setDotsPerMeterX(dpm);
+            rendered.setDotsPerMeterY(dpm);
+            return appendImage(rendered, rotationDeg);
+        }
+    }
     d->pages.push_back({true, QString::fromStdString(pdfPath), pageIndex, normalizeRotation(rotationDeg)});
     return true;
 }

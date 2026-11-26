@@ -19,9 +19,9 @@
 cmake_minimum_required(VERSION 3.21)
 
 if(APPLE)
-    project(TiScannUtility VERSION 1.0.0 LANGUAGES CXX OBJCXX)
+    project(TiScannUtility VERSION 1.1.0 LANGUAGES CXX OBJCXX)
 else()
-    project(TiScannUtility VERSION 1.0.0 LANGUAGES CXX)
+    project(TiScannUtility VERSION 1.1.0 LANGUAGES CXX)
 endif()
 
 set(CMAKE_CXX_STANDARD 17)
@@ -36,6 +36,16 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0")
 # Support both Qt 6 and Qt 5 dynamically linked
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Gui Core)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Gui Core)
+
+# macOS 26+ SDK removed the deprecated AGL framework still referenced by older Qt6 CMake configs.
+if(APPLE AND TARGET WrapOpenGL::WrapOpenGL)
+    get_target_property(_wrap_opengl_libs WrapOpenGL::WrapOpenGL INTERFACE_LINK_LIBRARIES)
+    if(_wrap_opengl_libs)
+        list(REMOVE_ITEM _wrap_opengl_libs "-framework AGL" "AGL")
+        string(REPLACE "-framework AGL" "" _wrap_opengl_libs "${_wrap_opengl_libs}")
+        set_target_properties(WrapOpenGL::WrapOpenGL PROPERTIES INTERFACE_LINK_LIBRARIES "${_wrap_opengl_libs}")
+    endif()
+endif()
 
 if(COMMAND qt_standard_project_setup)
     qt_standard_project_setup()
@@ -82,6 +92,7 @@ else()
 endif()
 
 target_include_directories(TiScannUtility PRIVATE src)
+target_compile_definitions(TiScannUtility PRIVATE APP_VERSION="${PROJECT_VERSION}")
 
 target_link_libraries(TiScannUtility PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
@@ -97,8 +108,8 @@ if(APPLE)
 
     set_target_properties(TiScannUtility PROPERTIES
         MACOSX_BUNDLE_BUNDLE_NAME "TiScannUtility"
-        MACOSX_BUNDLE_BUNDLE_VERSION "1.0.0"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.0"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Info.plist.in"
         MACOSX_BUNDLE_ICON_FILE "icon.icns"
     )
