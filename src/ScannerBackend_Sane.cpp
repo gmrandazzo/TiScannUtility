@@ -29,6 +29,7 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -263,6 +264,59 @@ static QImage thresholdToMono(const QImage& src) {
         }
     }
     return out;
+}
+
+static QImage trimAdfBlankTail(const QImage& img, int dpi) {
+    if (img.isNull() || dpi <= 0) return img;
+    const double heightMm = img.height() * 25.4 / double(dpi);
+    // Only trim when ADF scanned beyond A4 height (e.g. sane-airscan defaulting to 355.6 mm Legal).
+    if (heightMm <= 305.0) return img;
+
+    // Inspect below 302 mm (safely past A4's 297 mm bottom edge shadow).
+    const int checkStartY = int(std::floor(302.0 / 25.4 * double(dpi)));
+    const int a4Height = int(std::lround(297.0 / 25.4 * double(dpi)));
+    if (checkStartY >= img.height() || a4Height <= 0 || a4Height >= img.height()) return img;
+
+    const int marginX = std::min(img.width() / 4, int(std::floor(2.0 / 25.4 * double(dpi))));
+    const int xStart = marginX;
+    const int xEnd = img.width() - marginX;
+    if (xEnd <= xStart) return img;
+
+    size_t darkPixels = 0;
+    size_t checkedPixels = 0;
+    const auto fmt = img.format();
+
+    for (int y = checkStartY; y < img.height(); ++y) {
+        const uchar* row = img.constScanLine(y);
+        if (fmt == QImage::Format_RGB888) {
+            for (int x = xStart; x < xEnd; ++x) {
+                const int sum = int(row[x * 3]) + int(row[x * 3 + 1]) + int(row[x * 3 + 2]);
+                if (sum < 240 * 3) ++darkPixels;
+                ++checkedPixels;
+            }
+        } else if (fmt == QImage::Format_Grayscale8) {
+            for (int x = xStart; x < xEnd; ++x) {
+                if (row[x] < 240) ++darkPixels;
+                ++checkedPixels;
+            }
+        } else if (fmt == QImage::Format_Mono) {
+            for (int x = xStart; x < xEnd; ++x) {
+                if ((row[x >> 3] & uchar(0x80 >> (x & 7))) != 0) ++darkPixels;
+                ++checkedPixels;
+            }
+        } else {
+            return img;
+        }
+    }
+
+    // If <= 0.05% of the tail below 302 mm has non-white pixels, it is blank ADF padding.
+    if (checkedPixels > 0 && darkPixels * 2000 <= checkedPixels) {
+        QImage cropped = img.copy(0, 0, img.width(), a4Height);
+        cropped.setDotsPerMeterX(img.dotsPerMeterX());
+        cropped.setDotsPerMeterY(img.dotsPerMeterY());
+        return cropped;
+    }
+    return img;
 }
 
 static std::string toLower(const std::string& str) {
@@ -1023,6 +1077,10 @@ struct ScannerBackend::Impl {
                     int dpm = int(dpiToUse / 0.0254 + 0.5);
                     pageImg.setDotsPerMeterX(dpm);
                     pageImg.setDotsPerMeterY(dpm);
+
+                    if (usingFeeder) {
+                        pageImg = trimAdfBlankTail(pageImg, dpiToUse);
+                    }
 
                     if (options.colorMode == ColorMode::BlackWhite) {
                         pageImg = thresholdToMono(pageImg);

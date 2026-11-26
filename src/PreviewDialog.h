@@ -34,6 +34,7 @@ public:
     PreviewDialog(const QImage& image, const QString& title, QWidget* parent = nullptr);
 
 protected:
+    void showEvent(QShowEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
 
