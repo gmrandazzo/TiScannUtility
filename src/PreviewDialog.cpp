@@ -27,6 +27,8 @@
 #include <QResizeEvent>
 #include <QScreen>
 #include <QScrollArea>
+#include <QShowEvent>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
@@ -42,7 +44,6 @@ PreviewDialog::PreviewDialog(const QImage& image, const QString& title, QWidget*
     scroll_ = new QScrollArea(this);
     imageLabel_ = new QLabel;
     imageLabel_->setAlignment(Qt::AlignCenter);
-    updatePixmap();
     scroll_->setWidget(imageLabel_);
     scroll_->setAlignment(Qt::AlignCenter);
     vbox->addWidget(scroll_, 1);
@@ -76,7 +77,9 @@ PreviewDialog::PreviewDialog(const QImage& image, const QString& title, QWidget*
 }
 
 void PreviewDialog::updatePixmap() {
-    QSize target = image_.size() * scale_;
+    if (image_.isNull()) return;
+    QSize target(std::max(1, int(image_.width() * scale_)),
+                 std::max(1, int(image_.height() * scale_)));
     QImage scaled = image_.scaled(target, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     imageLabel_->setPixmap(QPixmap::fromImage(scaled));
     imageLabel_->resize(scaled.size());
@@ -97,9 +100,9 @@ void PreviewDialog::zoomOut() {
 void PreviewDialog::fitToWindow() {
     fitMode_ = true;
     QSize vp = scroll_->viewport()->size();
-    if (vp.isEmpty() || image_.isNull()) return;
-    double sx = double(vp.width()) / image_.width();
-    double sy = double(vp.height()) / image_.height();
+    if (vp.width() <= 8 || vp.height() <= 8 || image_.isNull()) return;
+    double sx = double(vp.width() - 4) / image_.width();
+    double sy = double(vp.height() - 4) / image_.height();
     scale_ = std::max(0.05, std::min(sx, sy));
     updatePixmap();
 }
@@ -110,9 +113,24 @@ void PreviewDialog::actualSize() {
     updatePixmap();
 }
 
+void PreviewDialog::showEvent(QShowEvent* event) {
+    QDialog::showEvent(event);
+    if (fitMode_) {
+        fitToWindow();
+        QTimer::singleShot(0, this, [this] {
+            if (fitMode_) fitToWindow();
+        });
+    }
+}
+
 void PreviewDialog::resizeEvent(QResizeEvent* event) {
     QDialog::resizeEvent(event);
-    if (fitMode_) fitToWindow();
+    if (fitMode_) {
+        fitToWindow();
+        QTimer::singleShot(0, this, [this] {
+            if (fitMode_) fitToWindow();
+        });
+    }
 }
 
 void PreviewDialog::wheelEvent(QWheelEvent* event) {
