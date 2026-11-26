@@ -19,9 +19,9 @@
 cmake_minimum_required(VERSION 3.21)
 
 if(APPLE)
-    project(TiScannUtility VERSION 1.1.0 LANGUAGES CXX OBJCXX)
+    project(TiScannUtility VERSION 1.2.0 LANGUAGES CXX OBJCXX)
 else()
-    project(TiScannUtility VERSION 1.1.0 LANGUAGES CXX)
+    project(TiScannUtility VERSION 1.2.0 LANGUAGES CXX)
 endif()
 
 set(CMAKE_CXX_STANDARD 17)
