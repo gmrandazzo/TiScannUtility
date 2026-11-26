@@ -37,6 +37,16 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0")
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Gui Core)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Gui Core)
 
+# macOS 26+ SDK removed the deprecated AGL framework still referenced by older Qt6 CMake configs.
+if(APPLE AND TARGET WrapOpenGL::WrapOpenGL)
+    get_target_property(_wrap_opengl_libs WrapOpenGL::WrapOpenGL INTERFACE_LINK_LIBRARIES)
+    if(_wrap_opengl_libs)
+        list(REMOVE_ITEM _wrap_opengl_libs "-framework AGL" "AGL")
+        string(REPLACE "-framework AGL" "" _wrap_opengl_libs "${_wrap_opengl_libs}")
+        set_target_properties(WrapOpenGL::WrapOpenGL PROPERTIES INTERFACE_LINK_LIBRARIES "${_wrap_opengl_libs}")
+    endif()
+endif()
+
 if(COMMAND qt_standard_project_setup)
     qt_standard_project_setup()
 endif()
